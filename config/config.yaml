@@ -1,0 +1,29 @@
+# Project configuration. Edit values here; the Python config object reflects them.
+
+data:
+  ucdp_csv_path: "data/raw/GEDEvent_v25_1.csv"
+  processed_dir: "data/processed"
+
+scope:
+  conflict_parties_include: ["Ukraine", "Government of Ukraine"]
+  date_start: "2022-01-01"
+  date_end: "2024-12-31"
+
+retrieval:
+  top_k: 10
+  semantic_top_k: 20
+  bm25_top_k: 20
+  rrf_k: 60
+
+models:
+  embedding_model: "BAAI/bge-large-en-v1.5"
+  llm_model: "mistral:7b"
+  ollama_base_url: "http://localhost:11434"
+
+router:
+  mode: "rules"
+  bias_warning_threshold: 0.7
+
+generation:
+  temperature: 0.3
+  max_tokens: 512

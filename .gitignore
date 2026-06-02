@@ -1,0 +1,35 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Build artifacts
+build/
+dist/
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Project-specific: large/regenerable data
+data/raw/*.csv
+data/chroma_db/
+data/processed/
+
+# Outputs (logs gitignored; eval results selectively committed)
+outputs/query_log.jsonl
+
+# Jupyter
+.ipynb_checkpoints/
