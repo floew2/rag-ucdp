@@ -21,11 +21,11 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "numpy>=1.26",
     # Intel macOS compatibility stack (torch 2.2 is the last x86_64 macOS wheel)
-    "onnxruntime<1.20; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "torch<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "numpy<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "transformers<4.45; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "sentence-transformers<3.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "onnxruntime<1.20",
+    "torch<2.3",
+    "numpy<2",
+    "transformers<4.45",
+    "sentence-transformers<3.2",
 ]
 
 [project.optional-dependencies]
