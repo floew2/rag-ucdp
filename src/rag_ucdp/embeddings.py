@@ -38,21 +38,33 @@ class EmbeddingModel:
     triggering the ~1.3 GB BGE-large download.
     """
 
-    def __init__(self, model_name: str = DEFAULT_MODEL_NAME) -> None:
+    def __init__(
+        self,
+        model_name: str = DEFAULT_MODEL_NAME,
+        device: str | None = None,
+    ) -> None:
         """Create the wrapper without loading the model.
 
         Args:
             model_name: Hugging Face model identifier.
+            device: Optional device string ("cpu", "mps", "cuda"). If None,
+                sentence-transformers picks automatically. Set "cpu" explicitly
+                to avoid MPS out-of-memory errors on macOS.
         """
         self.model_name = model_name
+        self.device = device
         self._model: SentenceTransformer | None = None
 
     @property
     def model(self) -> SentenceTransformer:
         """Return the underlying ``SentenceTransformer``, loading if needed."""
         if self._model is None:
-            logger.info("Loading embedding model %s", self.model_name)
-            self._model = SentenceTransformer(self.model_name)
+            logger.info(
+                "Loading embedding model %s on device=%s",
+                self.model_name,
+                self.device or "auto",
+            )
+            self._model = SentenceTransformer(self.model_name, device=self.device)
         return self._model
 
     @property

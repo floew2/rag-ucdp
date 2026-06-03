@@ -26,6 +26,7 @@ dist/
 # Project-specific: large/regenerable data
 data/raw/*.csv
 data/chroma_db/
+data/bm25/
 data/processed/*
 !data/processed/events_ukraine.parquet
 
