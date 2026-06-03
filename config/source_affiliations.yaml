@@ -1,0 +1,113 @@
+# Source affiliation mapping for UCDP GED `source_office` values.
+#
+# Each top-level key is an affiliation category. Each value is the list of
+# canonical outlet names that map to it. At lookup time, names are normalized
+# (lowercase, whitespace-trimmed) so minor variants ("UA Losses" / "UALosses"
+# / "UA losses") all resolve to the same entry.
+#
+# Outlets not listed here resolve to `other_or_unknown`.
+#
+# Categorization decisions are explained in the README "Decisions and
+# Tradeoffs" section.
+
+russian_state:
+  - "ITAR-TASS"
+  - "RIA News"
+  - "TASS"
+  - "RT"
+  - "Ria.ru"
+  - "Russia Today"
+  - "Sputnik"
+
+russian_independent_critical:
+  # Russian outlets that operate from exile and are designated "foreign agent"
+  # or banned inside Russia. Editorially adversarial to the Kremlin.
+  - "Mediazona"
+  - "Meduza"
+  - "Novaya Gazeta"
+  - "Novaya Gazeta Europe"
+  - "iStories"
+  - "The Insider"
+
+ukrainian_state:
+  # State news agency proper.
+  - "Ukrinform"
+  - "Ukrinform: news"
+
+ukrainian_government_official:
+  # Direct government channels (presidency, ministries, municipal bodies).
+  - "ELECTRONIC PETITIONS  Official online representation of the President of Ukraine"
+  - "Boryspil city council"
+
+ukrainian_public_broadcaster:
+  # Public broadcaster — state-funded but editorially separate (post-2017 reform).
+  - "Suspilne"
+  - "Suspilne Media"
+
+ukrainian_independent_news:
+  - "Militarnyi"
+  - "Obozrevatel"
+  - "Censor.NET"
+  - "novynarnia"
+  - "Euromaidan Press"
+  - "Kyiv Independent"
+  - "Kyiv Post"
+  - "Pravda"
+  - "Ukrainska Pravda"
+
+ukrainian_casualty_tracker:
+  # Crowd-sourced / volunteer databases of confirmed deaths. Not news outlets;
+  # factual registries with their own methodologies.
+  - "UA Losses"
+  - "UALosses"
+  - "UA losses"
+  - "fallenukraineheroes.info"
+  - "Fallen Heroes Of Ukraine"
+  - "Poternet.site"
+
+osint_volunteer:
+  # Open-source intelligence projects, Twitter/YouTube analysts, equipment
+  # trackers. Generally pro-Ukrainian in framing but factually-oriented.
+  - "Russo-Ukrainian Warspotting"
+  - "Reporting from Ukraine"
+  - "MilitaryLand"
+  - "MilitaryLand.net"
+  - "Wartranslated"
+  - "Rob Lee"
+  - "Oryx"
+  - "ISW"
+  - "Institute for the Study of War"
+
+international_independent:
+  - "BBC"
+  - "BBC News"
+  - "Reuters"
+  - "AP"
+  - "Associated Press"
+  - "AFP"
+  - "The Guardian"
+  - "Al Jazeera"
+  - "New York Times"
+  - "Washington Post"
+  - "Le Monde"
+
+international_ngo:
+  - "AOAV"
+  - "Action on Armed Violence"
+  - "Human Rights Watch"
+  - "Amnesty International"
+  - "OHCHR"
+  - "ICRC"
+
+analyst_or_opinion:
+  # Opinion blogs and advocacy outlets — clearly distinct from straight reporting.
+  - "Daily Kos"
+
+social_media_platform:
+  # Bare platform names appearing as `source_office`. Often unknown channel
+  # behind them. Treat as low-confidence.
+  - "Telegram"
+  - "Twitter"
+  - "X"
+
+other_or_unknown: []

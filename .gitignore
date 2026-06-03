@@ -26,7 +26,8 @@ dist/
 # Project-specific: large/regenerable data
 data/raw/*.csv
 data/chroma_db/
-data/processed/
+data/processed/*
+!data/processed/events_ukraine.parquet
 
 # Outputs (logs gitignored; eval results selectively committed)
 outputs/query_log.jsonl
