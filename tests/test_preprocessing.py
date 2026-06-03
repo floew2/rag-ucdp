@@ -88,9 +88,9 @@ def test_extract_metadata_is_chromadb_compatible(sample_row: pd.Series) -> None:
     assert meta["best"] == 5
     assert meta["source_office_joined"] == "BBC; Reuters"
     for key, value in meta.items():
-        assert isinstance(
-            value, str | int | float | bool
-        ), f"Metadata field {key!r} has incompatible type {type(value).__name__}"
+        assert isinstance(value, str | int | float | bool), (
+            f"Metadata field {key!r} has incompatible type {type(value).__name__}"
+        )
 
 
 def test_build_event_records_requires_derived_columns(sample_row: pd.Series) -> None:

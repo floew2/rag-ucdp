@@ -128,7 +128,7 @@ class BM25Index:
         """
         if not path.exists():
             raise FileNotFoundError(
-                f"BM25 index not found at {path}. " "Run the indexing notebook first."
+                f"BM25 index not found at {path}. Run the indexing notebook first."
             )
         with path.open("rb") as f:
             data = pickle.load(f)
