@@ -169,3 +169,40 @@ class VectorStore:
             }
             for i in range(len(ids))
         ]
+
+    def get_by_ids(
+        self,
+        ids: list[str],
+        where: dict[str, Any] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch documents and metadata for the given ids, optionally filtered.
+
+        When ``where`` is provided, returns only the ids whose metadata
+        satisfies the filter (intersection of ``ids`` with the where clause).
+        This is used by the retrieval layer to apply a metadata filter to
+        BM25 results, which have no native filter support.
+
+        Args:
+            ids: Document ids to fetch.
+            where: Optional ChromaDB metadata filter.
+
+        Returns:
+            Dict mapping found id to ``{"document": ..., "metadata": ...}``.
+            Ids not in the collection or not matching the filter are absent.
+        """
+        if not ids:
+            return {}
+        raw = self._collection.get(
+            ids=ids,
+            where=where,
+            include=["documents", "metadatas"],
+        )
+        returned_ids = raw["ids"]
+        docs = raw["documents"]
+        metas = raw["metadatas"]
+        assert docs is not None
+        assert metas is not None
+        return {
+            returned_ids[i]: {"document": docs[i], "metadata": metas[i]}
+            for i in range(len(returned_ids))
+        }

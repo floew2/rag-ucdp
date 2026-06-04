@@ -32,7 +32,7 @@ def sample_data() -> tuple[list[str], list[str], np.ndarray, list[dict]]:
 
 def test_empty_store_has_zero_count(tmp_path: Path) -> None:
     """A freshly opened collection contains no documents."""
-    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="t")
+    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="test_coll")
     assert store.count == 0
 
 
@@ -42,7 +42,7 @@ def test_add_then_count_matches(
 ) -> None:
     """After adding N documents, count() returns N."""
     ids, docs, embs, metas = sample_data
-    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="t")
+    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="test_coll")
     store.add_documents(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
     assert store.count == len(ids)
 
@@ -53,7 +53,7 @@ def test_query_returns_identical_first(
 ) -> None:
     """Querying with a doc's own embedding returns that doc as the closest match."""
     ids, docs, embs, metas = sample_data
-    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="t")
+    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="test_coll")
     store.add_documents(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
 
     results = store.query(query_embedding=embs[5], top_k=3)
@@ -68,7 +68,7 @@ def test_query_with_metadata_filter(
 ) -> None:
     """The 'where' parameter restricts results to matching metadata."""
     ids, docs, embs, metas = sample_data
-    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="t")
+    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="test_coll")
     store.add_documents(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
 
     results = store.query(query_embedding=embs[0], top_k=10, where={"country": "Ukraine"})
@@ -79,7 +79,7 @@ def test_query_with_metadata_filter(
 
 def test_length_mismatch_raises(tmp_path: Path) -> None:
     """add_documents validates input lengths and raises ValueError."""
-    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="t")
+    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="test_coll")
     embs = np.zeros((1, 64), dtype=np.float32)
     with pytest.raises(ValueError, match="Length mismatch"):
         store.add_documents(ids=["a"], documents=["d1", "d2"], embeddings=embs, metadatas=[{}])
@@ -93,12 +93,12 @@ def test_persistence_across_instances(
     ids, docs, embs, metas = sample_data
     persist = tmp_path / "chroma"
 
-    store1 = VectorStore(persist_dir=persist, collection_name="t")
+    store1 = VectorStore(persist_dir=persist, collection_name="test_coll")
     store1.add_documents(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
     initial_count = store1.count
     del store1
 
-    store2 = VectorStore(persist_dir=persist, collection_name="t")
+    store2 = VectorStore(persist_dir=persist, collection_name="test_coll")
     assert store2.count == initial_count
 
 
@@ -108,7 +108,7 @@ def test_reset_clears_collection(
 ) -> None:
     """reset() drops all documents from the collection."""
     ids, docs, embs, metas = sample_data
-    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="t")
+    store = VectorStore(persist_dir=tmp_path / "chroma", collection_name="test_coll")
     store.add_documents(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
     assert store.count > 0
 
