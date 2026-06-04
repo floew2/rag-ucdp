@@ -76,6 +76,7 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D"]      # don't require docstrings in tests
 "app/*" = ["D"]        # don't require docstrings in streamlit app
+"src/rag_ucdp/router.py" = ["UP042"] # StrEnum not yet supported by pinned mypy
 
 [tool.mypy]
 python_version = "3.12"
