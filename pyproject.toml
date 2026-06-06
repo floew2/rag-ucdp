@@ -26,6 +26,7 @@ dependencies = [
     "numpy<2",
     "transformers<4.45",
     "sentence-transformers<3.2",
+    "folium>=0.16,<0.21",
 ]
 
 [project.optional-dependencies]
