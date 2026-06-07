@@ -140,9 +140,25 @@ class SourceAffiliationLookup:
 
 
 def _split_outlets(value: Any) -> list[str]:
-    """Split a ``source_office_joined`` cell into outlet strings."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
+    """Split a source cell into outlet strings.
+
+    Handles both shapes the project produces:
+
+    - ``source_office_joined`` (str): ``"ITAR-TASS; UA Losses"`` — used in
+      ChromaDB metadata.
+    - ``source_office_list`` (list / array): ``["ITAR-TASS", "UA Losses"]`` —
+      used in the parquet DataFrame.
+    """
+    if value is None:
         return []
+    if isinstance(value, float) and pd.isna(value):
+        return []
+    # List/tuple/numpy array shape (from source_office_list)
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if hasattr(value, "__iter__") and not isinstance(value, str):
+        return [str(v).strip() for v in value if str(v).strip()]
+    # String shape (from source_office_joined)
     s = str(value).strip()
     if not s:
         return []
@@ -161,7 +177,7 @@ def _diversity_label(simpsons_index: float) -> str:
 def compute_source_bias(
     events_df: pd.DataFrame,
     lookup: SourceAffiliationLookup,
-    source_column: str = DEFAULT_SOURCE_COLUMN,
+    source_column: str | None = None,
 ) -> SourceBiasReport:
     """Compute source-bias metrics over an event set.
 
@@ -178,7 +194,14 @@ def compute_source_bias(
     Raises:
         KeyError: if ``source_column`` is not in ``events_df.columns``.
     """
-    if source_column not in events_df.columns:
+    if source_column is None:
+        if "source_office_joined" in events_df.columns:
+            source_column = "source_office_joined"
+        elif "source_office_list" in events_df.columns:
+            source_column = "source_office_list"
+        else:
+            raise KeyError("events_df has neither 'source_office_joined' nor 'source_office_list'")
+    elif source_column not in events_df.columns:
         raise KeyError(f"events_df is missing source column: {source_column!r}")
 
     counter: Counter[str] = Counter()

@@ -170,8 +170,27 @@ def test_counts_sorted_descending(lookup: SourceAffiliationLookup) -> None:
 
 def test_missing_source_column_raises(lookup: SourceAffiliationLookup) -> None:
     df = pd.DataFrame({"id": [1]})
-    with pytest.raises(KeyError, match="source_office_joined"):
+    with pytest.raises(KeyError):
         compute_source_bias(df, lookup)
+
+
+def test_compute_source_bias_handles_list_column(
+    lookup: SourceAffiliationLookup,
+) -> None:
+    """Parquet stores outlets as a list per row, not a joined string."""
+    df = pd.DataFrame(
+        {
+            "source_office_list": [
+                ["ITAR-TASS", "Mediazona"],
+                ["Reuters"],
+                ["UA Losses", "Ukrinform", "Reuters"],
+            ]
+        }
+    )
+    report = compute_source_bias(df, lookup)
+    assert report.total_outlet_mentions == 6
+    assert report.counts.get("international_independent") == 2
+    assert report.counts.get("russian_state") == 1
 
 
 def test_dominance_threshold_constant_is_70_percent() -> None:

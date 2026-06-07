@@ -64,6 +64,46 @@ EXAMPLE_QUERIES = {
 }
 
 
+def _diversity_gauge_html(simpsons_index: float, label: str) -> str:
+    """Return inline HTML for a horizontal Simpson's-index gauge.
+
+    Bar gradient encodes the thresholds (green/amber/red at 0.25 and 0.5).
+    An inverted triangle marks the actual value.
+    """
+    pct = min(100.0, max(0.0, simpsons_index * 100))
+    label_color = {
+        "high": "#22c55e",
+        "moderate": "#f59e0b",
+        "low": "#ef4444",
+        "n/a": "#6b7280",
+    }.get(label, "#6b7280")
+    return f"""
+    <div style="margin: 8px 0 16px 0;">
+      <div style="display: flex; justify-content: space-between;
+                  margin-bottom: 4px; font-size: 0.8em; color: #9ca3af;">
+        <span>← high diversity</span>
+        <span>moderate</span>
+        <span>low (monolithic) →</span>
+      </div>
+      <div style="position: relative; height: 14px;
+                  background: linear-gradient(
+                    to right,
+                    #22c55e 0%, #22c55e 25%,
+                    #f59e0b 25%, #f59e0b 50%,
+                    #ef4444 50%, #ef4444 100%);
+                  border-radius: 3px;">
+        <div style="position: absolute; left: {pct}%; top: -6px;
+                    transform: translateX(-50%); font-size: 1.4em;
+                    line-height: 1; color: #111;">▼</div>
+      </div>
+      <div style="margin-top: 6px; font-size: 0.9em;
+                  color: {label_color}; font-weight: 600;">
+        Simpson's index = {simpsons_index:.2f} → {label} diversity
+      </div>
+    </div>
+    """
+
+
 # --- Resource loading ---
 
 
@@ -112,7 +152,7 @@ def render_router_decision(decision: RouterDecision) -> None:
 
 
 def render_source_bias_panel(events_df: pd.DataFrame, lookup: SourceAffiliationLookup) -> None:
-    """Render the source-bias panel: description + per-affiliation bar chart."""
+    """Render the source-bias panel: gauge + description + per-affiliation chart."""
     st.subheader("Source bias")
     report = compute_source_bias(events_df, lookup)
 
@@ -124,6 +164,11 @@ def render_source_bias_panel(events_df: pd.DataFrame, lookup: SourceAffiliationL
         st.warning(f"⚠️ {report.description}")
     else:
         st.info(report.description)
+
+    st.markdown(
+        _diversity_gauge_html(report.simpsons_index, report.diversity_label),
+        unsafe_allow_html=True,
+    )
 
     breakdown = pd.DataFrame([{"affiliation": k, "count": v} for k, v in report.counts.items()])
     st.bar_chart(breakdown.set_index("affiliation"))
@@ -184,7 +229,7 @@ def execute_path_a(query: str, decision: RouterDecision, resources: dict[str, An
         )
 
     with st.spinner(f"Generating answer with {resources['generator'].model}..."):
-        gen_result = resources["generator"].generate(query, results)
+        gen_result = resources["generator"].generate(query, results, top_k=5)
 
     st.subheader("Answer")
     if gen_result.error:
@@ -196,13 +241,14 @@ def execute_path_a(query: str, decision: RouterDecision, resources: dict[str, An
     st.caption(f"Generated in {gen_result.elapsed_seconds:.1f}s")
 
     events_df = retrieval_results_to_dataframe(results)
+
     col1, col2 = st.columns(2)
     with col1:
-        render_evidence_panel(results)
-    with col2:
         render_map_panel(events_df)
+    with col2:
+        render_source_bias_panel(events_df, resources["lookup"])
 
-    render_source_bias_panel(events_df, resources["lookup"])
+    render_evidence_panel(results)
 
     with st.expander("🔧 Debug: prompt sent to the model"):
         st.code(gen_result.prompt, language=None)
@@ -257,13 +303,14 @@ def execute_path_c(query: str, decision: RouterDecision, resources: dict[str, An
         render_breakdown_chart(result.structured_result.breakdown)
 
     events_df = retrieval_results_to_dataframe(result.retrieval_results)
+
     col1, col2 = st.columns(2)
     with col1:
-        render_evidence_panel(result.retrieval_results)
-    with col2:
         render_map_panel(events_df)
+    with col2:
+        render_source_bias_panel(events_df, resources["lookup"])
 
-    render_source_bias_panel(events_df, resources["lookup"])
+    render_evidence_panel(result.retrieval_results)
 
 
 def execute_path_d(query: str, decision: RouterDecision, _resources: dict[str, Any]) -> None:
