@@ -137,3 +137,20 @@ def test_decision_has_reason_string() -> None:
 def test_decision_confidence_is_known_label() -> None:
     decision = classify("anything")
     assert decision.confidence in {"high", "medium", "low"}
+
+
+def test_kursk_canonicalizes_with_oblast_suffix() -> None:
+    """Kursk token must map to 'Kursk oblast' to match parquet adm_1 values.
+
+    Regression: an earlier version mapped 'kursk' -> 'Kursk', causing
+    pandas filters to return 0 events even though 514 Kursk events exist
+    in the corpus. Found by structured-query eval (Phase 11).
+    """
+    decision = classify("How many events in Kursk?")
+    assert decision.filters == {"adm_1": "Kursk oblast"}
+
+
+def test_belgorod_canonicalizes_with_oblast_suffix() -> None:
+    """Belgorod token must map to 'Belgorod oblast'. Same regression as Kursk."""
+    decision = classify("How many events in Belgorod?")
+    assert decision.filters == {"adm_1": "Belgorod oblast"}
