@@ -40,12 +40,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_OLLAMA_URL: Final[str] = "http://localhost:11434"
 
 #: Default model tag. Must be present after ``ollama pull mistral:7b``.
-DEFAULT_MODEL: Final[str] = "mistral:7b-instruct-v0.3-q4_0"  # "mistral:7b"
+DEFAULT_MODEL: Final[str] = "llama3.2:3b"  # "mistral:7b-instruct-v0.3-q4_0"  # "mistral:7b"
 
 #: Default per-request timeout. Mistral 7B on Intel Mac CPU runs at roughly
 #: 5–10 tokens/sec, so a 200-token answer takes ~30s; 120s is a comfortable
 #: ceiling without locking the UI forever.
-DEFAULT_TIMEOUT_S: Final[float] = 120.0
+DEFAULT_TIMEOUT_S: Final[float] = 600.0
 
 #: Default number of retrieval results to include in the prompt context.
 DEFAULT_PROMPT_TOP_K: Final[int] = 10
