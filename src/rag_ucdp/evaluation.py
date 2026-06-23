@@ -2,7 +2,7 @@
 
 Four evaluation tracks aligned with the four router paths:
 
-1. **Retrieval** — Hit Rate, MRR (at a cutoff ``k``)
+1. **Retrieval** — Hit Rate, MRR, set-based Recall (at a cutoff ``k``)
 2. **Generation** — Semantic Answer Similarity (SAS), citation faithfulness
 3. **Router** — per-class precision / recall / F1, confusion matrix
 4. **Structured query** — exact-match accuracy on scalar values and breakdowns
@@ -159,12 +159,33 @@ def mean_reciprocal_rank(predicted_ids: list[str], gold_ids: list[str], k: int) 
     return 0.0
 
 
+def set_recall(predicted_ids: list[str], gold_ids: list[str], k: int) -> float:
+    """Fraction of gold ids that appear in the top-k predicted ids.
+
+    Set-based Recall@k = ``|gold ∩ top-k| / |gold|``. This is the fractional
+    generalisation of :func:`hit_rate` (the binary "at least one gold in
+    top-k"); for single-gold queries the two coincide.
+
+    This is recall against the *labelled* gold set, which is a known-item
+    judgment set rather than a complete relevance set — so it measures ranking
+    coverage of the known relevant events, not absolute corpus recall.
+
+    Returns 0.0 when ``gold_ids`` is empty.
+    """
+    gold_set = {str(g) for g in gold_ids}
+    if not gold_set:
+        return 0.0
+    top_k = {str(p) for p in predicted_ids[:k]}
+    return len(gold_set & top_k) / len(gold_set)
+
+
 @dataclass
 class RetrievalMetrics:
     """Aggregated retrieval metrics with per-query traces."""
 
     hit_rate_at_k: float
     mrr_at_k: float
+    recall_at_k: float
     k: int
     n_queries: int
     per_query: list[dict[str, Any]] = field(default_factory=list)
@@ -182,21 +203,25 @@ def evaluate_retrieval(
         retrieve_fn: Function taking a query and returning an ordered list of
             event ids. Wrapping :func:`hybrid_retrieve` in such a lambda is
             the typical use.
-        k: Cutoff for Hit Rate and MRR.
+        k: Cutoff for Hit Rate, MRR, and set-based Recall.
 
     Returns:
-        A :class:`RetrievalMetrics` with mean Hit Rate and mean MRR.
+        A :class:`RetrievalMetrics` with mean Hit Rate, mean MRR, and mean
+        set-based Recall.
     """
     hits: list[float] = []
     mrrs: list[float] = []
+    recalls: list[float] = []
     per_query: list[dict[str, Any]] = []
 
     for item in test_items:
         predicted = retrieve_fn(item.query)
         h = hit_rate(predicted, item.gold_ids, k)
         m = mean_reciprocal_rank(predicted, item.gold_ids, k)
+        r = set_recall(predicted, item.gold_ids, k)
         hits.append(h)
         mrrs.append(m)
+        recalls.append(r)
         per_query.append(
             {
                 "query": item.query,
@@ -204,6 +229,7 @@ def evaluate_retrieval(
                 "predicted_top_k": [str(p) for p in predicted[:k]],
                 "hit_rate": h,
                 "mrr": m,
+                "recall": r,
                 "category": item.category,
             }
         )
@@ -211,6 +237,7 @@ def evaluate_retrieval(
     return RetrievalMetrics(
         hit_rate_at_k=float(np.mean(hits)) if hits else 0.0,
         mrr_at_k=float(np.mean(mrrs)) if mrrs else 0.0,
+        recall_at_k=float(np.mean(recalls)) if recalls else 0.0,
         k=k,
         n_queries=len(test_items),
         per_query=per_query,

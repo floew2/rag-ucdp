@@ -1,0 +1,32 @@
+# Transliteration / spelling alias map (v006).
+#
+# Folds spelling variants of the same place to one canonical token, applied
+# symmetrically at BM25 index + query time and shared by the router. This is
+# NOT semantic synonym expansion — only surface variants of the *same* entity
+# (Russian vs Ukrainian romanisation, renames, adm_1-field spellings).
+#
+# Format:  canonical_token: [variant, variant, ...]
+# Every variant and the canonical itself are lowercased single tokens.
+#
+# Each pair was verified against events_ukraine.parquet: variants listed below
+# actually occur in source_headline and/or the adm_1 field. Counts (headline
+# token frequency) noted for the audit trail.
+#
+# Verified, both forms occur in the corpus:
+kyiv:          [kiev]              # kyiv 212 / kiev 108
+kharkiv:       [kharkov]           # kharkiv 928 / kharkov 115
+luhansk:       [lugansk]           # luhansk 200 / lugansk 62
+odesa:         [odessa]            # odesa 110 / odessa 37  (adm_1: "Odessa oblast")
+mykolaiv:      [nikolaev, mykolayiv]  # mykolaiv 97 / nikolaev 167  (adm_1: "Mykolayiv oblast")
+chernihiv:     [chernigov]         # chernihiv 111 / chernigov 1
+dnipro:        [dnepr]             # dnipro 114 / dnepr 314  (city only; not the oblast)
+zhytomyr:      [zhitomir]          # zhytomyr 34 / zhitomir 4
+zaporizhzhia:  [zaporizhzhya, zaporozhye, zaporizhia]  # 217 / 9 / 634 / 56  (adm_1: "Zaporizhzhya oblast")
+severodonetsk: [sievierodonetsk]   # severodonetsk 64 / sievierodonetsk 0 (query-side robustness)
+bakhmut:       [artemivsk]         # bakhmut 521 / artemivsk 4 (rename)
+#
+# Query-side robustness: only the canonical occurs in the corpus, but users may
+# type the variant; folding the query lets it match the canonical's documents.
+rivne:         [rovno]             # rivne 87 / rovno 0
+mariupol:      [marioupol]         # mariupol 126 / marioupol 0
+vinnytsia:     [vinnytsya]         # vinnytsia 137 / vinnytsya 0  (adm_1: "Vinnytsya oblast")

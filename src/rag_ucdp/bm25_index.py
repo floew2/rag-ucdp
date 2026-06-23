@@ -18,39 +18,249 @@ import re
 from pathlib import Path
 from typing import Any, Final
 
+import snowballstemmer
 from rank_bm25 import BM25Okapi
+
+from rag_ucdp.canonicalization import canonicalize_tokens
 
 logger = logging.getLogger(__name__)
 
 #: Regex matching alphanumeric tokens. Drops punctuation, keeps numbers.
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+")
 
+#: Snowball English stemmer instance (reused across calls; cheap and stateless
+#: for our purposes). Used only when ``stem=True`` is requested.
+_STEMMER = snowballstemmer.stemmer("english")
 
-def tokenize(text: str) -> list[str]:
+#: English stopword list (NLTK's standard English set, apostrophe-containing
+#: forms dropped since the alphanumeric tokenizer never produces them). Used
+#: only when ``remove_stopwords=True``. This is a BM25-only lever — the dense
+#: retriever is never stopword-filtered.
+_STOPWORDS: Final[frozenset[str]] = frozenset(
+    [
+        "i",
+        "me",
+        "my",
+        "myself",
+        "we",
+        "our",
+        "ours",
+        "ourselves",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "yourselves",
+        "he",
+        "him",
+        "his",
+        "himself",
+        "she",
+        "her",
+        "hers",
+        "herself",
+        "it",
+        "its",
+        "itself",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "themselves",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "this",
+        "that",
+        "these",
+        "those",
+        "am",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "having",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "a",
+        "an",
+        "the",
+        "and",
+        "but",
+        "if",
+        "or",
+        "because",
+        "as",
+        "until",
+        "while",
+        "of",
+        "at",
+        "by",
+        "for",
+        "with",
+        "about",
+        "against",
+        "between",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "to",
+        "from",
+        "up",
+        "down",
+        "in",
+        "out",
+        "on",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "here",
+        "there",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "any",
+        "both",
+        "each",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "nor",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "s",
+        "t",
+        "can",
+        "will",
+        "just",
+        "don",
+        "should",
+        "now",
+        "d",
+        "ll",
+        "m",
+        "o",
+        "re",
+        "ve",
+        "y",
+        "ain",
+        "aren",
+        "couldn",
+        "didn",
+        "doesn",
+        "hadn",
+        "hasn",
+        "haven",
+        "isn",
+        "ma",
+        "mightn",
+        "mustn",
+        "needn",
+        "shan",
+        "shouldn",
+        "wasn",
+        "weren",
+        "won",
+        "wouldn",
+    ]
+)
+
+
+def tokenize(
+    text: str,
+    *,
+    stem: bool = False,
+    remove_stopwords: bool = False,
+    canonicalize: bool = False,
+) -> list[str]:
     """Tokenize text for BM25 indexing and querying.
 
     Lowercases input and extracts alphanumeric runs. Punctuation is dropped;
-    hyphenated terms split into multiple tokens.
+    hyphenated terms split into multiple tokens. Optionally removes English
+    stopwords and/or applies Snowball stemming.
+
+    Order is: lowercase + split -> (optional) stopword removal on surface forms
+    -> (optional) stemming. Stopwords are removed before stemming so they match
+    the surface-form stopword list.
+
+    The same flags must be used for indexing and querying, or matching breaks;
+    :class:`BM25Index` enforces this by storing the flags and reusing them on
+    every query.
 
     Args:
         text: Input string.
+        stem: If True, apply the Snowball English stemmer to each token.
+        remove_stopwords: If True, drop English stopwords.
+        canonicalize: If True, fold transliteration/spelling variants to their
+            canonical form via the shared alias map (e.g. odessa -> odesa).
 
     Returns:
         List of lowercase tokens. May be empty for empty or pure-punctuation
         inputs.
     """
-    return _TOKEN_RE.findall(text.lower())
+    tokens = _TOKEN_RE.findall(text.lower())
+    if canonicalize:
+        tokens = canonicalize_tokens(tokens)
+    if remove_stopwords:
+        tokens = [t for t in tokens if t not in _STOPWORDS]
+    if stem:
+        tokens = _STEMMER.stemWords(tokens)
+    return tokens
 
 
 class BM25Index:
     """BM25 keyword index over a corpus of documents."""
 
-    def __init__(self, ids: list[str], documents: list[str]) -> None:
+    def __init__(
+        self,
+        ids: list[str],
+        documents: list[str],
+        *,
+        stem: bool = False,
+        remove_stopwords: bool = False,
+        canonicalize: bool = False,
+    ) -> None:
         """Build a BM25 index from parallel id and document lists.
 
         Args:
             ids: Stable unique ids, parallel to ``documents``.
             documents: Raw document texts.
+            stem: If True, apply Snowball stemming during tokenization. The
+                flag is stored and reused at query time so index and query
+                tokenization stay identical.
+            remove_stopwords: If True, drop English stopwords during
+                tokenization. Stored and reused at query time.
+            canonicalize: If True, fold spelling/transliteration variants to
+                their canonical form. Stored and reused at query time.
 
         Raises:
             ValueError: If ``ids`` and ``documents`` differ in length, or if
@@ -62,9 +272,21 @@ class BM25Index:
             raise ValueError("Cannot build BM25 index over an empty corpus.")
 
         self.ids: list[str] = list(ids)
-        tokenized = [tokenize(doc) for doc in documents]
+        self.stem: bool = stem
+        self.remove_stopwords: bool = remove_stopwords
+        self.canonicalize: bool = canonicalize
+        tokenized = [
+            tokenize(doc, stem=stem, remove_stopwords=remove_stopwords, canonicalize=canonicalize)
+            for doc in documents
+        ]
         self._bm25 = BM25Okapi(tokenized)
-        logger.info("Built BM25 index over %d documents", len(documents))
+        logger.info(
+            "Built BM25 index over %d documents (stem=%s, remove_stopwords=%s, canonicalize=%s)",
+            len(documents),
+            stem,
+            remove_stopwords,
+            canonicalize,
+        )
 
     def __len__(self) -> int:
         """Return the number of documents in the index."""
@@ -82,7 +304,12 @@ class BM25Index:
             in descending score order. Empty list if the query tokenizes to
             nothing.
         """
-        tokens = tokenize(query_text)
+        tokens = tokenize(
+            query_text,
+            stem=self.stem,
+            remove_stopwords=self.remove_stopwords,
+            canonicalize=self.canonicalize,
+        )
         if not tokens:
             return []
 
@@ -105,7 +332,16 @@ class BM25Index:
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("wb") as f:
-            pickle.dump({"ids": self.ids, "bm25": self._bm25}, f)
+            pickle.dump(
+                {
+                    "ids": self.ids,
+                    "bm25": self._bm25,
+                    "stem": self.stem,
+                    "remove_stopwords": self.remove_stopwords,
+                    "canonicalize": self.canonicalize,
+                },
+                f,
+            )
         logger.info(
             "Saved BM25 index (%d docs) to %s (%.2f MB)",
             len(self.ids),
@@ -136,5 +372,17 @@ class BM25Index:
         instance = cls.__new__(cls)
         instance.ids = data["ids"]
         instance._bm25 = data["bm25"]
-        logger.info("Loaded BM25 index (%d docs) from %s", len(instance.ids), path)
+        # Backward compatible: legacy pickles predate the tokenization flags and
+        # were built with the default (no stemming, no stopword removal).
+        instance.stem = data.get("stem", False)
+        instance.remove_stopwords = data.get("remove_stopwords", False)
+        instance.canonicalize = data.get("canonicalize", False)
+        logger.info(
+            "Loaded BM25 index (%d docs, stem=%s, remove_stopwords=%s, canonicalize=%s) from %s",
+            len(instance.ids),
+            instance.stem,
+            instance.remove_stopwords,
+            instance.canonicalize,
+            path,
+        )
         return instance

@@ -22,6 +22,7 @@ from rag_ucdp.evaluation import (
     load_test_set,
     mean_reciprocal_rank,
     semantic_answer_similarity,
+    set_recall,
 )
 
 # --- Retrieval metrics ---
@@ -61,6 +62,29 @@ class TestMRR:
     def test_uses_first_match(self) -> None:
         """Multiple gold ids: rank of the earliest one in predictions counts."""
         assert mean_reciprocal_rank(["1", "2", "3"], ["2", "3"], k=3) == 0.5
+
+
+class TestSetRecall:
+    def test_single_gold_hit_is_one(self) -> None:
+        assert set_recall(["1", "2", "3"], ["2"], k=3) == 1.0
+
+    def test_single_gold_miss_is_zero(self) -> None:
+        assert set_recall(["1", "2", "3"], ["4"], k=3) == 0.0
+
+    def test_partial_gold_set(self) -> None:
+        """2 of 4 gold ids in top-3 → 0.5."""
+        assert set_recall(["10", "99", "20", "88"], ["10", "20", "30", "40"], k=3) == 0.5
+
+    def test_respects_cutoff(self) -> None:
+        """Gold at rank 3 is excluded at k=2."""
+        assert set_recall(["1", "2", "3"], ["3"], k=2) == 0.0
+
+    def test_normalizes_id_types(self) -> None:
+        """Gold ids loaded from YAML may be ints; predictions are strings."""
+        assert set_recall(["1", "2"], [2], k=2) == 1.0
+
+    def test_empty_gold_returns_zero(self) -> None:
+        assert set_recall(["1", "2"], [], k=2) == 0.0
 
 
 # --- Generation metrics ---
@@ -172,6 +196,8 @@ def test_evaluate_retrieval_aggregates_correctly() -> None:
     assert metrics.hit_rate_at_k == pytest.approx(2 / 3)
     # MRR: Q1=1, Q2=0, Q3=1/2 → mean 1/2
     assert metrics.mrr_at_k == pytest.approx(0.5)
+    # Set-recall (all single-gold here, so equals hit rate): 1, 0, 1 → 2/3
+    assert metrics.recall_at_k == pytest.approx(2 / 3)
     assert metrics.n_queries == 3
     assert len(metrics.per_query) == 3
 

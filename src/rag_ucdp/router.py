@@ -34,6 +34,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Final
 
+from rag_ucdp.canonicalization import canonicalize_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,32 +140,31 @@ KNOWN_COUNTRIES: Final[dict[str, str]] = {
 #: Oblast / region tokens → canonical metadata ``adm_1`` value (matching what
 #: UCDP records in the parquet, verified during Phase 1 EDA).
 KNOWN_OBLASTS: Final[dict[str, str]] = {
+    # Keyed by CANONICAL token (the query is folded via the shared alias map
+    # before lookup, so spelling variants like odessa/kiev/zaporozhye need no
+    # separate keys). Values are the exact adm_1 strings in the parquet.
     "donetsk": "Donetsk oblast",
     "kharkiv": "Kharkiv oblast",
     "kherson": "Kherson oblast",
     "luhansk": "Luhansk oblast",
-    "zaporizhzhya": "Zaporizhzhya oblast",
-    "zaporozhye": "Zaporizhzhya oblast",
     "zaporizhzhia": "Zaporizhzhya oblast",
     "kyiv": "Kyiv oblast",
-    "kiev": "Kyiv oblast",
-    "odesa": "Odesa oblast",
-    "odessa": "Odesa oblast",
-    "mykolaiv": "Mykolaiv oblast",
+    "odesa": "Odessa oblast",
+    "mykolaiv": "Mykolayiv oblast",
     "dnipropetrovsk": "Dnipropetrovsk oblast",
     "sumy": "Sumy oblast",
     "chernihiv": "Chernihiv oblast",
     "zhytomyr": "Zhytomyr oblast",
     "lviv": "Lviv oblast",
-    "vinnytsya": "Vinnytsya oblast",
+    "vinnytsia": "Vinnytsya oblast",
     "rivne": "Rivne oblast",
     "volyn": "Volyn oblast",
     "kursk": "Kursk oblast",
     "belgorod": "Belgorod oblast",
-    "bryansk": "Bryansk",
-    "rostov": "Rostov",
-    "voronezh": "Voronezh",
-    "krasnodar": "Krasnodar",
+    "bryansk": "Bryansk oblast",
+    "rostov": "Rostov oblast",
+    "voronezh": "Voronezh oblast",
+    "krasnodar": "Krasnodar krai",
 }
 
 YEAR_PATTERN: Final[re.Pattern[str]] = re.compile(r"\b(20\d{2})\b")
@@ -248,8 +249,13 @@ def _extract_country_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]
 
 
 def _extract_oblast_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Detect oblast / region mentions. Multiple oblasts use ``$in``."""
-    q = query.lower()
+    """Detect oblast / region mentions. Multiple oblasts use ``$in``.
+
+    Query tokens are canonicalized via the shared alias map first, so spelling
+    variants (Odessa->Odesa, Kiev->Kyiv, Zaporozhye->Zaporizhzhia) match the
+    canonical KNOWN_OBLASTS keys.
+    """
+    q = " ".join(canonicalize_tokens(re.findall(r"[a-z0-9]+", query.lower())))
     detected: set[str] = set()
     for token, canonical in KNOWN_OBLASTS.items():
         if re.search(rf"\b{re.escape(token)}\b", q):

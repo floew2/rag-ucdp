@@ -101,3 +101,138 @@ def test_load_missing_file_raises(tmp_path: Path) -> None:
     """Loading a non-existent path raises FileNotFoundError."""
     with pytest.raises(FileNotFoundError):
         BM25Index.load(tmp_path / "does_not_exist.pkl")
+
+
+# --- Stemming + stopword removal (v004 BM25 preprocessing) -------------------
+
+
+def test_tokenize_stemming_merges_inflections() -> None:
+    """Snowball stemming collapses inflections of the same word."""
+    assert tokenize("shelling shelled shells", stem=True) == ["shell", "shell", "shell"]
+    assert tokenize("attack attacked attacking", stem=True) == ["attack", "attack", "attack"]
+
+
+def test_tokenize_stemming_misses_irregular_verbs() -> None:
+    """Documented understemming: 'struck' is not merged with 'strike'."""
+    assert tokenize("strike struck", stem=True) == ["strike", "struck"]
+
+
+def test_tokenize_stopword_removal() -> None:
+    """Stopwords are dropped; content words survive."""
+    assert tokenize("the attack on the city", remove_stopwords=True) == ["attack", "city"]
+
+
+def test_tokenize_combined_stem_and_stopwords() -> None:
+    """Stopwords removed first, then remaining tokens stemmed."""
+    assert tokenize("the forces were shelling the area", stem=True, remove_stopwords=True) == [
+        "forc",
+        "shell",
+        "area",
+    ]
+
+
+def test_tokenize_defaults_unchanged() -> None:
+    """Both flags off reproduces the original behavior (regression guard)."""
+    assert tokenize("Shelling in Donetsk") == ["shelling", "in", "donetsk"]
+
+
+def test_index_applies_stemming_symmetrically(
+    small_corpus: tuple[list[str], list[str]],
+) -> None:
+    """With stemming, query 'shelled' matches doc text 'Shelling'; without, it does not."""
+    ids, docs = small_corpus  # e0 contains "Shelling"
+    idx_plain = BM25Index(ids=ids, documents=docs)
+    idx_stem = BM25Index(ids=ids, documents=docs, stem=True)
+
+    plain = idx_plain.query("shelled", top_k=1)[0]
+    assert plain["score"] == 0.0  # no lexical match without stemming
+
+    stemmed = idx_stem.query("shelled", top_k=1)[0]
+    assert stemmed["id"] == "e0"
+    assert stemmed["score"] > 0  # stemming bridges shelled <-> shelling
+
+
+def test_save_load_preserves_tokenization_flags(
+    tmp_path: Path,
+    small_corpus: tuple[list[str], list[str]],
+) -> None:
+    """Saved flags are restored, so a reloaded index queries consistently."""
+    ids, docs = small_corpus
+    idx = BM25Index(ids=ids, documents=docs, stem=True, remove_stopwords=True)
+    path = tmp_path / "bm25.pkl"
+    idx.save(path)
+
+    idx2 = BM25Index.load(path)
+    assert idx2.stem is True
+    assert idx2.remove_stopwords is True
+    assert idx.query("shelled", top_k=2) == idx2.query("shelled", top_k=2)
+
+
+def test_load_legacy_pickle_defaults_flags_off(tmp_path: Path) -> None:
+    """Legacy pickles without flags load as stem=False, remove_stopwords=False."""
+    import pickle
+
+    from rank_bm25 import BM25Okapi
+
+    legacy = {"ids": ["a", "b"], "bm25": BM25Okapi([["x"], ["y"]])}
+    path = tmp_path / "legacy.pkl"
+    with path.open("wb") as f:
+        pickle.dump(legacy, f)
+
+    idx = BM25Index.load(path)
+    assert idx.stem is False
+    assert idx.remove_stopwords is False
+
+
+# --- Alias canonicalization (v006) ------------------------------------------
+
+
+def test_tokenize_canonicalizes_variants() -> None:
+    """Spelling variants fold to canonical; unknown tokens pass through."""
+    assert tokenize("strikes on Odessa and Kiev", canonicalize=True) == [
+        "strikes",
+        "on",
+        "odesa",
+        "and",
+        "kyiv",
+    ]
+
+
+def test_tokenize_canonicalize_off_by_default() -> None:
+    """Default leaves variants untouched (regression guard)."""
+    assert tokenize("Odessa Kiev") == ["odessa", "kiev"]
+
+
+def test_index_canonicalizes_symmetrically() -> None:
+    """A doc containing 'Odessa' is found by a query for 'Odesa' only with canonicalize.
+
+    Five docs so the matched term has positive IDF (BM25Okapi IDF is 0 for a
+    term occurring in 1 of only 2 docs).
+    """
+    ids = ["c0", "c1", "c2", "c3", "c4"]
+    docs = [
+        "Missile strike on Odessa port",
+        "Shelling in Donetsk",
+        "Drone over Kharkiv",
+        "Attack in Kherson",
+        "Fighting near Sumy",
+    ]
+    plain = BM25Index(ids=ids, documents=docs)
+    canon = BM25Index(ids=ids, documents=docs, canonicalize=True)
+
+    assert plain.query("Odesa", top_k=1)[0]["score"] == 0.0  # spelling mismatch, no match
+    top = canon.query("Odesa", top_k=1)[0]
+    assert top["id"] == "c0" and top["score"] > 0  # canonicalization bridges the spelling
+
+
+def test_save_load_preserves_canonicalize_flag(
+    tmp_path: Path,
+    small_corpus: tuple[list[str], list[str]],
+) -> None:
+    ids, docs = small_corpus
+    idx = BM25Index(ids=ids, documents=docs, canonicalize=True)
+    path = tmp_path / "bm25_canon.pkl"
+    idx.save(path)
+    idx2 = BM25Index.load(path)
+    assert idx2.canonicalize is True
+    assert idx2.stem is False and idx2.remove_stopwords is False

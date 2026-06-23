@@ -37,6 +37,39 @@ def test_rrf_fusion_empty_rankings() -> None:
     assert reciprocal_rank_fusion([[], []]) == {}
 
 
+def test_rrf_fusion_default_weights_unchanged() -> None:
+    """weights=None reproduces standard equal-weight RRF exactly."""
+    a = [{"id": "x"}, {"id": "y"}]
+    b = [{"id": "y"}, {"id": "z"}]
+    assert reciprocal_rank_fusion([a, b]) == reciprocal_rank_fusion([a, b], weights=[1.0, 1.0])
+
+
+def test_rrf_fusion_weights_scale_contribution() -> None:
+    """A ranking's contribution scales linearly with its weight."""
+    a = [{"id": "x"}]
+    b = [{"id": "y"}]
+    base = reciprocal_rank_fusion([a, b], rrf_k=60)
+    weighted = reciprocal_rank_fusion([a, b], rrf_k=60, weights=[2.0, 1.0])
+    assert weighted["x"] == pytest.approx(2 * base["x"])
+    assert weighted["y"] == pytest.approx(base["y"])
+
+
+def test_rrf_fusion_weight_ratio_breaks_tie() -> None:
+    """Up-weighting one ranker promotes a doc unique to it over a symmetric peer."""
+    a = [{"id": "x"}, {"id": "z"}]
+    b = [{"id": "y"}, {"id": "z"}]
+    equal = reciprocal_rank_fusion([a, b])
+    assert equal["x"] == pytest.approx(equal["y"])  # symmetric setup -> tie
+    sem_heavy = reciprocal_rank_fusion([a, b], weights=[2.0, 1.0])
+    assert sem_heavy["x"] > sem_heavy["y"]
+
+
+def test_rrf_fusion_weight_length_mismatch_raises() -> None:
+    """Mismatched weights/rankings lengths raise ValueError."""
+    with pytest.raises(ValueError, match="weights length"):
+        reciprocal_rank_fusion([[{"id": "a"}]], weights=[1.0, 2.0])
+
+
 def test_rrf_fusion_higher_k_compresses_scores() -> None:
     """Larger rrf_k yields smaller score gaps between adjacent ranks."""
     ranking = [{"id": "a"}, {"id": "b"}]

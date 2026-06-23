@@ -35,3 +35,5 @@ outputs/query_log.jsonl
 
 # Jupyter
 .ipynb_checkpoints/
+.idea/
+outputs/

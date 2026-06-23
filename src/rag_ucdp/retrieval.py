@@ -47,6 +47,9 @@ class RetrievalResult:
         vector_distance: Cosine distance from the vector search, if available.
         bm25_rank: 0-indexed rank within the BM25 results, or ``None``.
         bm25_score: BM25 score, if available.
+        rerank_score: Cross-encoder relevance score (v007), or ``None`` if the
+            result was not reranked. Higher = more relevant.
+        rerank_rank: 0-indexed rank within the reranked order, or ``None``.
     """
 
     id: str
@@ -57,30 +60,47 @@ class RetrievalResult:
     vector_distance: float | None = None
     bm25_rank: int | None = None
     bm25_score: float | None = None
+    rerank_score: float | None = None
+    rerank_rank: int | None = None
 
 
 def reciprocal_rank_fusion(
     rankings: list[list[dict[str, Any]]],
     rrf_k: int = DEFAULT_RRF_K,
+    weights: list[float] | None = None,
 ) -> dict[str, float]:
-    """Compute RRF scores from multiple ranked lists.
+    """Compute (optionally weighted) RRF scores from multiple ranked lists.
 
-    For each ranking and each item, contributes ``1 / (rrf_k + rank + 1)`` to
-    the item's id, where ``rank`` is 0-indexed.
+    For each ranking ``r`` and each item at 0-indexed ``rank``, contributes
+    ``weights[r] * 1 / (rrf_k + rank + 1)`` to the item's id. With the default
+    ``weights=None`` every ranking is weighted 1.0, recovering standard RRF.
+
+    Only the *ratio* of weights affects the final ordering; scaling all weights
+    by a constant leaves the ranking unchanged.
 
     Args:
         rankings: List of ranked lists, each item a dict with an ``id`` key
             and ordered by descending relevance.
         rrf_k: Smoothing constant. Default 60.
+        weights: Optional per-ranking weights, parallel to ``rankings``. If
+            None, all rankings are weighted equally (1.0).
 
     Returns:
         Dict mapping document id to its summed RRF score across all rankings.
+
+    Raises:
+        ValueError: If ``weights`` is provided with a length different from
+            ``rankings``.
     """
+    if weights is None:
+        weights = [1.0] * len(rankings)
+    elif len(weights) != len(rankings):
+        raise ValueError(f"weights length {len(weights)} != rankings length {len(rankings)}")
     scores: dict[str, float] = {}
-    for ranking in rankings:
+    for ranking, weight in zip(rankings, weights, strict=True):
         for rank, item in enumerate(ranking):
             doc_id = item["id"]
-            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (rrf_k + rank + 1)
+            scores[doc_id] = scores.get(doc_id, 0.0) + weight * (1.0 / (rrf_k + rank + 1))
     return scores
 
 
@@ -111,6 +131,8 @@ def hybrid_retrieve(
     semantic_top_k: int = 20,
     bm25_top_k: int = 20,
     rrf_k: int = DEFAULT_RRF_K,
+    semantic_weight: float = 1.0,
+    bm25_weight: float = 1.0,
     where: dict[str, Any] | None = None,
 ) -> list[RetrievalResult]:
     """Run hybrid retrieval and return top-k fused results.
@@ -124,6 +146,9 @@ def hybrid_retrieve(
         semantic_top_k: Candidate pool size for the vector search.
         bm25_top_k: Candidate pool size for BM25.
         rrf_k: RRF smoothing constant.
+        semantic_weight: Weight on the vector (semantic) ranking in fusion.
+        bm25_weight: Weight on the BM25 (lexical) ranking in fusion. Only the
+            semantic:bm25 ratio matters; 1.0/1.0 is standard equal-weight RRF.
         where: Optional ChromaDB metadata filter applied to both rankers.
 
     Returns:
@@ -142,7 +167,11 @@ def hybrid_retrieve(
         _filter_bm25_by_metadata(bm25_raw, vector_store, where) if where is not None else bm25_raw
     )
 
-    rrf_scores = reciprocal_rank_fusion([vector_results, bm25_results], rrf_k=rrf_k)
+    rrf_scores = reciprocal_rank_fusion(
+        [vector_results, bm25_results],
+        rrf_k=rrf_k,
+        weights=[semantic_weight, bm25_weight],
+    )
     top_ids = sorted(rrf_scores.keys(), key=lambda i: -rrf_scores[i])[:top_k]
 
     vector_by_id = {r["id"]: (rank, r) for rank, r in enumerate(vector_results)}

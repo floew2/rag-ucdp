@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0",
     "chromadb>=0.5",
     "rank-bm25>=0.2.2",
+    "snowballstemmer>=2.2",
     # Intel macOS compatibility stack — newer ML wheels lack x86_64 macOS support.
     "onnxruntime<1.20",
     "torch<2.3",
@@ -103,5 +104,6 @@ module = [
     "folium.*",
     "streamlit.*",
     "sentence_transformers.*",
+    "snowballstemmer.*",
 ]
 ignore_missing_imports = true
