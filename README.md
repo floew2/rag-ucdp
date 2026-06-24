@@ -232,23 +232,6 @@ Each test set has **two tiers**: a curated set (representative use cases, i.e. q
 | v007 | \+ cross-encoder rerank (MiniLM) | 0.833 | 0.653 | 0.655 | not adopted (paraphrase regressed) |
 | v008 | \+ cross-encoder rerank (BGE) | 0.833 | 0.571 | 0.573 | not adopted (stronger model is worse) |
 
-**No experiment improved headline retrieval over v003.** The one adopted change in the series is the v006 router canonicalization fix (a structured-track correctness fix, not a retrieval gain). Two notable negative results:
-
--   **Weighted RRF (v005)** — equal weight 1:1 is optimal here. The optimum is corpus-dependent: UCDP's BM25 leg, though weaker solo, contributes unique high-precision hits on proper-noun queries (Mariupol, Kerch, Przewodów) that any down-weighting discards.
--   **Cross-encoder reranking (v007/v008)** — the textbook fix for tier-2/3 paraphrase misses was tested with two models and **rejected**. v007's aggregate MRR gain (+0.031) is misleading: it comes entirely from literal queries already saturated at HR=1.0, while the *paraphrased* category — the entire motivation for reranking — regressed. v008 (a stronger model) is worse across the board, which **falsifies the "weak model" objection** and makes the result structural: an off-the-shelf relevance reranker is a less reliable judge of vocabulary-mismatched conflict-event paraphrases than the dense retriever it overrides. This rules out the standard mitigation for this corpus and leaves **tier-4 query expansion** as the only paraphrase lever with remaining headroom.
-
-> A methodological note worth its own mention: the first v007 run had a candidate-pool confound (reranker pool 20/20 vs baseline 30/30) that biased the comparison *against* the reranker. The notebook was audited, the harness fixed to a clean same-pool comparison, and v007/v008 re-run — the confound was small (±0.01–0.02) and the conclusions held. A negative result that survives its own audit, then generalizes across two models, is the trustworthy kind.
-
-### Eval-as-bug-detection
-
-The structured track surfaced four oblast→`adm_1` canonicalization bugs in two rounds (Kursk/Belgorod, then Odesa/Bryansk), each a systematic mismatch between the router's token vocabulary and the parquet's stored spelling. Systematic eval found them where spot-checking would not. All four are now fixed via a single shared canonicalization layer (`config/aliases.yaml` + `canonicalization.py`), and structured is back to **30/30**.
-
-### Gold-answer integrity
-
-Every numeric claim in every generation gold answer was verified against the parquet before commit. Verification *removed* a famous event from a gold answer — the Bilohorivka school airstrike (May 2022, \~60 dead) is **absent from UCDP** under any expected transliteration — which is itself a finding about UCDP corpus coverage: even emblematic mass-casualty events can fall into source-surveillance gaps.
-
-The full failure-mode taxonomy (12 modes across all four tracks), the per-category breakdowns, and the methodological findings from the generation extension are in [`PROJECT_SUMMARY_UCDP.md` §8](./PROJECT_SUMMARY_UCDP.md#8-evaluation-results-phases-1013).
-
 ------------------------------------------------------------------------
 
 ## Key design decisions
