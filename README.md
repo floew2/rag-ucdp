@@ -106,7 +106,8 @@ flowchart LR
     class CHROMA,BM25IDX store;
 ```
 
-The same ChromaDB-style `where` dict drives `vector_store.query`, the BM25 metadata intersection, and `structured_query.apply_filters` — **one filter shape, three execution engines**, so filter semantics are identical across dense, sparse, and structured paths.
+Both legs draw their candidate pool from a **prebuilt store** — the dense leg from ChromaDB (vectors + metadata), the sparse leg from `bm25/index.pkl` — and the same router-extracted `where` dict **pre-filters both** to in-scope events *before* each ranker selects its top pool. The dense leg filters natively inside ChromaDB; the sparse leg filters by masking BM25 scores to the in-scope id set before truncation (no index rebuild). The identical `where` also drives `structured_query.apply_filters` on path B — **one filter shape, three execution engines**. The filter is a hard pre-scope (exact match on categorical fields); the rankers order only what survives it.
+
 
 ### BM25 tokenization — what ships vs what was tested
 
