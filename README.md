@@ -1,6 +1,6 @@
 # rag-ucdp
 
-> Routed RAG (Hybrid: BM25 - Semantic - RRF), with a query router at the front of the pipeline. Implemented over the UCDP Georeferenced Event Dataset, with rule-based query routing, source-bias surfacing, and geospatial visualization of retrieved events. Scoped to the Ukraine conflict (2022+, \~28,531 events) and designed for a human-rights NGO context.
+> Hybrid RAG (BM25 - Semantic - RRF) over the UCDP Georeferenced Event Dataset, with rule-based query routing, source-bias surfacing, and geospatial visualization of retrieved events. Scoped to the Ukraine conflict (2022+, \~28,531 events) and designed for a human-rights NGO context.
 
 [![tests](https://img.shields.io/badge/tests-195%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.12-blue)](#prerequisites) [![license](https://img.shields.io/badge/code-MIT-green)](#license) [![data](https://img.shields.io/badge/data-CC--BY--4.0-lightgrey)](#data-and-citations)
 
@@ -87,17 +87,23 @@ flowchart LR
     Q(["query"]) --> EMB["BGE-large embed"]
     Q --> TOKQ["BM25 tokenize"]
     Q -.->|"router extracts<br/>year · country · oblast"| WHERE[/"where-filter<br/>(may be empty)"/]
-    EMB --> VEC["ChromaDB cosine<br/>semantic pool (20)"]
-    TOKQ --> BM25["BM25Okapi<br/>bm25 pool (20)"]
-    WHERE -.->|native filter| VEC
-    WHERE -.->|filter via id-intersection| PF
-    BM25 --> PF["metadata pre-filter<br/>intersect via ChromaDB get_by_ids"]
+
+    CHROMA[("ChromaDB<br/>vectors + metadata")] --> VEC["cosine search<br/>semantic pool (20)"]
+    BM25IDX[("bm25/index.pkl")] --> BM25["BM25 scoring<br/>bm25 pool (20)"]
+    EMB --> VEC
+    TOKQ --> BM25
+
+    WHERE -.->|filter| VEC
+    WHERE -.->|filter| BM25
+
     VEC --> RRF{{"Reciprocal Rank Fusion<br/>Σ 1 / (60 + rank + 1)<br/>order-only · weighting 1:1"}}
-    PF --> RRF
+    BM25 --> RRF
     RRF --> TOPK["top-k RetrievalResult[]<br/>id · document · metadata ·<br/>vector_rank · bm25_rank · rrf_score"]
 
     classDef filt fill:#e3f2fd,stroke:#1565c0,color:#0d2b4d;
+    classDef store fill:#eef,stroke:#557,color:#113;
     class WHERE filt;
+    class CHROMA,BM25IDX store;
 ```
 
 The same ChromaDB-style `where` dict drives `vector_store.query`, the BM25 metadata intersection, and `structured_query.apply_filters` — **one filter shape, three execution engines**, so filter semantics are identical across dense, sparse, and structured paths.
