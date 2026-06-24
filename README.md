@@ -1,6 +1,6 @@
 # rag-ucdp
 
-> Hybrid RAG (BM25 - Semantic - RRF) over the UCDP Georeferenced Event Dataset, with rule-based query routing, source-bias surfacing, and geospatial visualization of retrieved events. Scoped to the Ukraine conflict (2022+, \~28,531 events) and designed for a human-rights NGO context.
+> Routed RAG (Hybrid: BM25 - Semantic - RRF), with a query router at the front of the pipeline. Implemented over the UCDP Georeferenced Event Dataset, with rule-based query routing, source-bias surfacing, and geospatial visualization of retrieved events. Scoped to the Ukraine conflict (2022+, \~28,531 events) and designed for a human-rights NGO context.
 
 [![tests](https://img.shields.io/badge/tests-195%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.12-blue)](#prerequisites) [![license](https://img.shields.io/badge/code-MIT-green)](#license) [![data](https://img.shields.io/badge/data-CC--BY--4.0-lightgrey)](#data-and-citations)
 
