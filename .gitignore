@@ -30,10 +30,8 @@ data/bm25/
 data/processed/*
 !data/processed/events_ukraine.parquet
 
-# Outputs (logs gitignored; eval results selectively committed)
-outputs/query_log.jsonl
+# Scratch / delivery outputs (eval results are committed under evals/)
+outputs/
 
 # Jupyter
 .ipynb_checkpoints/
-.idea/
-outputs/
