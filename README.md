@@ -25,7 +25,7 @@ Key features:
 |------------------------|------------------------|------------------------|
 | Router | accuracy 0.840 · macro-F1 0.852 | n=50 |
 | Structured | **30/30** exact-match (all canonicalization bugs fixed) | n=30 |
-| Retrieval (hybrid) | [HR\@10](mailto:HR@10){.email} 0.867 · [MRR\@10](mailto:MRR@10){.email} 0.622 · [set-Recall\@10](mailto:set-Recall@10){.email} 0.686 · [Recall\@25](mailto:Recall@25){.email} 0.827 | n=30 |
+| Retrieval (hybrid) | HR@10 0.867 · MRR@10 0.622 · set-Recall@10 0.686 · Recall@25 0.827 | n=30 |
 | Generation | mean SAS 0.715 · citation faithfulness 1.00 · 0% Poor | n=20 |
 
 ### Stack
