@@ -44,28 +44,29 @@ flowchart TD
         direction TB
         CSV["GEDEvent_v25_1.csv"] --> SCOPE["scope filter (offline, one-time)<br/>side_a or side_b = Ukraine<br/>AND date_start in 2022-01-01 … 2024-12-31"]
         SCOPE --> PARQUET[("events_ukraine.parquet<br/>~28,531 events")]
-        PARQUET --> DOC["build_document_text()<br/>concatenate UCDP fields into one text:<br/>date · location · parties · type ·<br/>fatalities · headline (truncated at 800 chars)"]
+        PARQUET --> DOC["build_document_text()<br/>concatenate UCDP fields into one text:<br/>date · location · parties · type ·<br/>fatalities · headline (trunc. 800)"]
         PARQUET --> META["extract_metadata()<br/>id · year · oblast · lat/lng ·<br/>best · side_a/b · sources"]
         DOC --> EMB["BGE-large embed<br/>raw text · 1024-d · L2-norm"]
         DOC --> TOK["BM25 tokenize<br/>lowercase → regex split [a-z0-9]+<br/>(optional) stopword · stem · alias"]
-        EMB --> CHROMA[("ChromaDB<br/>cosine + metadata")]
+        EMB --> CHROMA[("ChromaDB<br/>vectors + metadata")]
         META --> CHROMA
         TOK --> BM25IDX[("bm25/index.pkl")]
     end
 
-    Q(["User query"]) --> ROUTER{"Router (rule-based)<br/>1 · classify path (strict priority)<br/>2 · extract where-filter"}
-    ROUTER -->|"causal / opinion / moral"| D["D · Refusal<br/>templated · NO LLM, NO retrieval, NO filter"]
-    ROUTER -->|"path A / B / C"| WHERE[/"where-filter (query-time)<br/>year · country · oblast<br/>(may be empty)"/]
+    CHROMA --> INDEXES["prebuilt indexes<br/>(ChromaDB + BM25)"]
+    BM25IDX --> INDEXES
+
+    Q(["User query"]) --> ROUTER{"Router (heuristic)<br/>1 · classify path (strict priority)<br/>2 · query parser → filter extraction"}
+    ROUTER -->|"causal / opinion / moral"| D["D · Refusal<br/>templated · NO LLM, NO retrieval"]
+    ROUTER -->|"path A / B / C"| WHERE[/"filter extraction (query parser)<br/>where: year · country · oblast<br/>(may be empty)"/]
     WHERE -->|semantic| A["A · Semantic<br/>hybrid retrieval → llama3.2:3b"]
-    WHERE -->|quantitative| B["B · Structured<br/>pandas aggregation<br/>NO LLM"]
+    WHERE -->|quantitative| B["B · Structured<br/>pandas aggregation · NO LLM"]
     WHERE -->|mixed| C["C · Hybrid<br/>retrieval + aggregation → llama3.2:3b"]
 
-    CHROMA -.->|retrieve, scoped by filter| A
-    BM25IDX -.->|retrieve, scoped by filter| A
-    CHROMA -.->|retrieve, scoped by filter| C
-    BM25IDX -.->|retrieve, scoped by filter| C
-    PARQUET -.->|aggregate, scoped by filter| B
-    PARQUET -.->|aggregate, scoped by filter| C
+    INDEXES -.->|retrieve, filtered| A
+    INDEXES -.->|retrieve, filtered| C
+    PARQUET -.->|aggregate, filtered| B
+    PARQUET -.->|aggregate, filtered| C
 
     A --> UI["Streamlit UI<br/>router decision · answer · evidence panel ·<br/>source-bias panel · Folium map"]
     B --> UI
@@ -75,7 +76,7 @@ flowchart TD
     classDef store fill:#eef,stroke:#557,color:#113;
     classDef nollm fill:#fff3e0,stroke:#c80,color:#630;
     classDef filt fill:#e3f2fd,stroke:#1565c0,color:#0d2b4d;
-    class PARQUET,CHROMA,BM25IDX store;
+    class PARQUET,CHROMA,BM25IDX,INDEXES store;
     class B,D nollm;
     class WHERE filt;
 ```
