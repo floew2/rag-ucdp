@@ -42,8 +42,8 @@ BGE-large-en-v1.5 (1024-d, MTEB-top-ranked) · ChromaDB (PersistentClient, cosin
 flowchart TD
     subgraph OFFLINE["Offline indexing — one-time, Colab GPU"]
         direction TB
-        CSV["GEDEvent_v25_1.csv"] --> FILTER["scope filter<br/>side_a or side_b = Ukraine<br/>AND date_start in 2022-01-01 … 2024-12-31"]
-        FILTER --> PARQUET[("events_ukraine.parquet<br/>~28,531 events")]
+        CSV["GEDEvent_v25_1.csv"] --> SCOPE["scope filter (offline, one-time)<br/>side_a or side_b = Ukraine<br/>AND date_start in 2022-01-01 … 2024-12-31"]
+        SCOPE --> PARQUET[("events_ukraine.parquet<br/>~28,531 events")]
         PARQUET --> DOC["build_document_text()<br/>concatenate UCDP fields into one text:<br/>date · location · parties · type ·<br/>fatalities · headline (truncated at 800 chars)"]
         PARQUET --> META["extract_metadata()<br/>id · year · oblast · lat/lng ·<br/>best · side_a/b · sources"]
         DOC --> EMB["BGE-large embed<br/>raw text · 1024-d · L2-norm"]
@@ -55,10 +55,10 @@ flowchart TD
 
     Q(["User query"]) --> ROUTER{"Router (rule-based)<br/>1 · classify path (strict priority)<br/>2 · extract where-filter"}
     ROUTER -->|"causal / opinion / moral"| D["D · Refusal<br/>templated · NO LLM, NO retrieval, NO filter"]
-    ROUTER -->|"path A / B / C"| FILTER[/"where-filter<br/>year · country · oblast<br/>(may be empty)"/]
-    FILTER -->|semantic| A["A · Semantic<br/>hybrid retrieval → llama3.2:3b"]
-    FILTER -->|quantitative| B["B · Structured<br/>pandas aggregation<br/>NO LLM"]
-    FILTER -->|mixed| C["C · Hybrid<br/>retrieval + aggregation → llama3.2:3b"]
+    ROUTER -->|"path A / B / C"| WHERE[/"where-filter (query-time)<br/>year · country · oblast<br/>(may be empty)"/]
+    WHERE -->|semantic| A["A · Semantic<br/>hybrid retrieval → llama3.2:3b"]
+    WHERE -->|quantitative| B["B · Structured<br/>pandas aggregation<br/>NO LLM"]
+    WHERE -->|mixed| C["C · Hybrid<br/>retrieval + aggregation → llama3.2:3b"]
 
     CHROMA -.->|retrieve, scoped by filter| A
     BM25IDX -.->|retrieve, scoped by filter| A
@@ -77,7 +77,7 @@ flowchart TD
     classDef filt fill:#e3f2fd,stroke:#1565c0,color:#0d2b4d;
     class PARQUET,CHROMA,BM25IDX store;
     class B,D nollm;
-    class FILTER filt;
+    class WHERE filt;
 ```
 
 ### Hybrid retrieval internals (paths A & C)
@@ -86,7 +86,7 @@ flowchart TD
 flowchart LR
     Q(["query"]) --> EMB["BGE-large embed"]
     Q --> TOKQ["BM25 tokenize"]
-    WHERE[/"where-filter<br/>year · country · oblast<br/>(from router)"/]
+    Q -.->|"router extracts<br/>year · country · oblast"| WHERE[/"where-filter<br/>(may be empty)"/]
     EMB --> VEC["ChromaDB cosine<br/>semantic pool (20)"]
     TOKQ --> BM25["BM25Okapi<br/>bm25 pool (20)"]
     WHERE -.->|native filter| VEC
