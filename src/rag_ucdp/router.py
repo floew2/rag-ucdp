@@ -125,30 +125,48 @@ SEMANTIC_CONCEPT_KEYWORDS: Final[tuple[str, ...]] = (
     "shopping",
 )
 
-#: Country tokens → canonical metadata ``country`` value.
+#: Country NOUN tokens → canonical metadata ``country`` value.
+#: Adjective forms (russian/ukrainian/polish) are deliberately ABSENT: in this
+#: single-conflict corpus they denote the *actor*, not the event *location*
+#: (almost every event is ``country='Ukraine'``), so "Russian forces" must not
+#: set ``country=Russia``. The country filter therefore fires only on a
+#: *locative* mention — a noun preceded by in/into/within/inside (see
+#: ``_LOCATIVE_COUNTRY``) — which keeps the genuine cross-border case
+#: ("attacks into Russia") while dropping the actor-confusion that previously
+#: excluded Ukraine-located events.
 KNOWN_COUNTRIES: Final[dict[str, str]] = {
     "ukraine": "Ukraine",
-    "ukrainian": "Ukraine",
     "russia": "Russia (Soviet Union)",
-    "russian": "Russia (Soviet Union)",
     "poland": "Poland",
-    "polish": "Poland",
     "belarus": "Belarus",
     "moldova": "Moldova",
 }
 
-#: Oblast / region tokens → canonical metadata ``adm_1`` value (matching what
-#: UCDP records in the parquet, verified during Phase 1 EDA).
-KNOWN_OBLASTS: Final[dict[str, str]] = {
-    # Keyed by CANONICAL token (the query is folded via the shared alias map
-    # before lookup, so spelling variants like odessa/kiev/zaporozhye need no
-    # separate keys). Values are the exact adm_1 strings in the parquet.
+#: A country filter fires only when a country noun is the object of a locative
+#: preposition, optionally with one intervening word ("in eastern Poland",
+#: "in Przewodów Poland"). This excludes adjectives ("Russian occupation") and
+#: compounds ("Crimea-Russia link"), which mention a country without locating
+#: the event there.
+_LOCATIVE_COUNTRY: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:in|into|within|inside)\s+(?:[a-zà-ÿ0-9'’-]+\s+){0,1}("
+    + "|".join(re.escape(t) for t in KNOWN_COUNTRIES)
+    + r")\b"
+)
+
+#: Oblast / region tokens → canonical metadata ``adm_1`` value(s), verified
+#: against the parquet's actual ``adm_1`` vocabulary. A token may map to a
+#: TUPLE when the parquet splits one place across several ``adm_1`` values
+#: (city vs oblast); those are combined with ``$in`` so the token matches all
+#: of them. Spelling variants (odessa/kiev/zaporozhye) are folded by the shared
+#: alias map before lookup, so only the canonical token needs a key here.
+KNOWN_OBLASTS: Final[dict[str, str | tuple[str, ...]]] = {
     "donetsk": "Donetsk oblast",
     "kharkiv": "Kharkiv oblast",
     "kherson": "Kherson oblast",
     "luhansk": "Luhansk oblast",
     "zaporizhzhia": "Zaporizhzhya oblast",
-    "kyiv": "Kyiv oblast",
+    # Kyiv: the parquet splits the city from the surrounding oblast.
+    "kyiv": ("Kyiv oblast", "Kyiv Special Republican city"),
     "odesa": "Odessa oblast",
     "mykolaiv": "Mykolayiv oblast",
     "dnipropetrovsk": "Dnipropetrovsk oblast",
@@ -159,12 +177,16 @@ KNOWN_OBLASTS: Final[dict[str, str]] = {
     "vinnytsia": "Vinnytsya oblast",
     "rivne": "Rivne oblast",
     "volyn": "Volyn oblast",
+    # Crimea = the whole peninsula (ARC + the separately-coded city of Sevastopol).
+    "crimea": ("Autonomous Republic of Crimea", "Sevastopol City State Administration"),
+    "sevastopol": "Sevastopol City State Administration",
     "kursk": "Kursk oblast",
     "belgorod": "Belgorod oblast",
     "bryansk": "Bryansk oblast",
     "rostov": "Rostov oblast",
-    "voronezh": "Voronezh oblast",
+    "voronezh": "Voronezh oblast",  # no events in scope; harmless (matches nothing)
     "krasnodar": "Krasnodar krai",
+    "moscow": ("Moscow oblast", "Moscow gorod"),
 }
 
 YEAR_PATTERN: Final[re.Pattern[str]] = re.compile(r"\b(20\d{2})\b")
@@ -230,16 +252,15 @@ def _extract_year_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def _extract_country_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Detect a single country mention.
+    """Detect a country mention used *locatively* (the event's location).
 
-    Ambiguous matches (e.g. both Russia and Ukraine in 'Russia-Ukraine war')
-    yield no filter, to avoid wrongly excluding events.
+    Fires only when a country noun is the object of a locative preposition
+    (in/into/within/inside), so "attacks into Russia" sets ``country=Russia``
+    but "Russian occupation" / "Crimea-Russia link" do not. Multiple distinct
+    countries yield no filter, to avoid wrongly excluding events.
     """
     q = query.lower()
-    detected: set[str] = set()
-    for token, canonical in KNOWN_COUNTRIES.items():
-        if re.search(rf"\b{re.escape(token)}\b", q):
-            detected.add(canonical)
+    detected: set[str] = {KNOWN_COUNTRIES[m.group(1)] for m in _LOCATIVE_COUNTRY.finditer(q)}
     if not detected:
         return ({}, {})
     if len(detected) == 1:
@@ -249,17 +270,22 @@ def _extract_country_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]
 
 
 def _extract_oblast_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Detect oblast / region mentions. Multiple oblasts use ``$in``.
+    """Detect oblast / region mentions. Multiple ``adm_1`` values use ``$in``.
 
     Query tokens are canonicalized via the shared alias map first, so spelling
     variants (Odessa->Odesa, Kiev->Kyiv, Zaporozhye->Zaporizhzhia) match the
-    canonical KNOWN_OBLASTS keys.
+    canonical KNOWN_OBLASTS keys. A single token may contribute several
+    ``adm_1`` values when the parquet splits a place across them (e.g. Kyiv
+    city vs oblast); all are unioned.
     """
     q = " ".join(canonicalize_tokens(re.findall(r"[a-z0-9]+", query.lower())))
     detected: set[str] = set()
     for token, canonical in KNOWN_OBLASTS.items():
         if re.search(rf"\b{re.escape(token)}\b", q):
-            detected.add(canonical)
+            if isinstance(canonical, tuple):
+                detected.update(canonical)
+            else:
+                detected.add(canonical)
     if not detected:
         return ({}, {})
     if len(detected) == 1:

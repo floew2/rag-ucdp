@@ -154,3 +154,56 @@ def test_belgorod_canonicalizes_with_oblast_suffix() -> None:
     """Belgorod token must map to 'Belgorod oblast'. Same regression as Kursk."""
     decision = classify("How many events in Belgorod?")
     assert decision.filters == {"adm_1": "Belgorod oblast"}
+
+
+# --- v009 filter-extraction regressions (country-from-actor, city/oblast split) ---
+
+
+def test_country_not_extracted_from_adjective() -> None:
+    """'Russian' is an actor, not a location: it must NOT set country=Russia.
+
+    Regression: 'Russian occupation north of Kyiv' previously extracted
+    country='Russia (Soviet Union)', which excluded the Bucha events
+    (country='Ukraine') entirely. The country filter now fires only on a
+    locative mention (in/into/within/inside <country>).
+    """
+    decision = classify("Civilian killings during Russian occupation north of Kyiv")
+    assert "country" not in decision.filters
+    assert "$and" not in decision.filters  # only the Kyiv oblast clause remains
+
+
+def test_country_extracted_from_locative_into_russia() -> None:
+    """The genuine cross-border case must still set country=Russia."""
+    decision = classify("Cross-border attacks into Russia")
+    assert decision.filters == {"country": "Russia (Soviet Union)"}
+
+
+def test_country_locative_allows_one_intervening_word() -> None:
+    """'in Przewodów Poland' should still resolve to Poland."""
+    decision = classify("Events in Przewodów Poland")
+    assert decision.filters == {"country": "Poland"}
+
+
+def test_country_not_extracted_from_compound() -> None:
+    """'Crimea-Russia' names Russia in a compound, not as the event location."""
+    decision = classify("Crimea-Russia transport link sabotaged")
+    assert "country" not in decision.filters
+
+
+def test_kyiv_covers_city_and_oblast() -> None:
+    """Kyiv must match BOTH adm_1 values the parquet splits it across.
+
+    Regression: mapping 'kyiv' -> 'Kyiv oblast' only excluded events coded
+    'Kyiv Special Republican city' (the city), dropping 3 of 4 Kyiv drone-strike
+    golds once filters were enabled in the eval.
+    """
+    decision = classify("Drone strikes in Kyiv")
+    assert decision.filters == {"adm_1": {"$in": ["Kyiv Special Republican city", "Kyiv oblast"]}}
+
+
+def test_crimea_covers_peninsula() -> None:
+    """'Crimea' means the whole peninsula: ARC + the separately-coded Sevastopol."""
+    decision = classify("Events in Crimea")
+    assert decision.filters == {
+        "adm_1": {"$in": ["Autonomous Republic of Crimea", "Sevastopol City State Administration"]}
+    }
