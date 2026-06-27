@@ -19,14 +19,16 @@ Key features:
 3.  **Geospatial visualization** (an NGO requirement) — Folium maps overlay retrieved events on Ukrainian territory, making spatial context and cross-border events (Kursk, Belgorod, Poland) visible at a glance.
 
 
-### Headline metrics (baseline, v003 — struct = v006)
+### Headline metrics (baseline, v009 — filtered production path)
 
 | Track | Metric | Test set |
 |------------------------|------------------------|------------------------|
 | Router | accuracy 0.840 · macro-F1 0.852 | n=50 |
 | Structured | **30/30** exact-match (all canonicalization bugs fixed) | n=30 |
-| Retrieval (hybrid) | HR@10 0.867 · MRR@10 0.622 · set-Recall@10 0.686 · Recall@25 0.827 | n=30 |
-| Generation | mean SAS 0.715 · citation faithfulness 1.00 · 0% Poor | n=20 |
+| Retrieval (hybrid) | HR@10 0.867 · MRR@10 0.640 · set-Recall@10 0.686 · Recall@25 0.827 | n=30 |
+| Generation | mean SAS 0.742 · citation faithfulness 1.00 · 0% Poor | n=20 |
+
+*v009 replaced the earlier v003–v008 baseline, which evaluated with the router's metadata filter inadvertently disabled (`where=None`). v009 wires the eval to the real filtered path and fixes the three filter bugs that exposed — see [Evaluation](#evaluation) and the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).*
 
 ### Stack
 
@@ -141,7 +143,7 @@ Flags for stemming, stopword removal, and canonicalization remain in `bm25_index
 
 ### Router (strict priority — first match wins)
 
-```         
+```
 1. REFUSAL keywords present              → Path D (Refusal)
 2. AGGREGATION keywords present
      2a. AND semantic concept present    → Path C (Hybrid)
@@ -231,6 +233,9 @@ Each test set has **two tiers**: a curated set (representative use cases, i.e. q
 | v006 | alias canonicalization | 0.867 | 0.622 | 0.677 | **router fix adopted** (structured 28→30/30); BM25 alias index not adopted |
 | v007 | \+ cross-encoder rerank (MiniLM) | 0.833 | 0.653 | 0.655 | not adopted (paraphrase regressed) |
 | v008 | \+ cross-encoder rerank (BGE) | 0.833 | 0.571 | 0.573 | not adopted (stronger model is worse) |
+| **v009** | **filtered harness + BM25 pre-filter (new baseline)** | 0.867 | 0.640 | 0.686 | **adopted** (supersedes v003) |
+
+The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* harness. **v009 is different in kind:** it corrects the harness so evaluation exercises the production *filtered* path (the router's `where` filter was previously inactive in eval), then fixes the three filter bugs that correction exposed — country-from-actor over-reach (now locative-only), the Kyiv city/oblast split (now `$in [oblast, city]`), and the ChromaDB-invalid year-range shape — and moves BM25 from post- to pre-filtering. It is therefore a **new reference point, not a single-knob delta**: HR@10/Rec@10 are unchanged (most queries carry no filter), MRR@10 improves (+0.018) where filters tighten the in-scope set. v009 is now the headline baseline; v003–v008 remain valid relative to each other. Full account — including the *administrative-boundary* limitation it documents — is the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
 
 ------------------------------------------------------------------------
 
@@ -253,6 +258,7 @@ The decisions below are the ones a reader is most likely to question; the full l
 -   **BM25 uses no stemming or stopword removal** — a deliberate baseline; the ablation (v004) showed it nets slightly negative here.
 -   **Modest test-set sizes** (n=20–50 per track). Adequate to surface failure modes; not for tight confidence intervals. Single-pass, no cross-validation.
 -   **Generation eval is path-A-isolated**, by design — it measures LLM quality given retrieved context, not end-to-end routing behavior.
+-   **Hard `adm_1` filters exclude across-boundary events.** A metadata filter scoped to one oblast drops genuinely relevant events coded *just across* an administrative line from the queried place — e.g. a ZNPP event coded to the Dnipropetrovsk/Nikopol bank (the Dnipro river is the oblast boundary), or the Krasnodar-side strike on the Kerch bridge. The filter is correct *per its predicate*; the predicate is narrower than user intent. Surfaced and documented in v009 (kept in the gold, not trimmed).
 -   **English-only embeddings.** BGE-large-en-v1.5; UCDP headlines are predominantly English but contain transliterated terms whose spelling variants (Odesa/Odessa, Kyiv/Kiev) affect retrieval.
 -   **Source-bias taxonomy is hand-curated** (\~963 outlets, 13 categories); new outlets in future UCDP releases need manual classification.
 -   **Folium maps use online OSM tiles**; offline operation needs self-hosted tiles. Indexes are built once (Colab) — refreshing for a new UCDP release is a manual notebook step.
@@ -261,7 +267,7 @@ The decisions below are the ones a reader is most likely to question; the full l
 
 ## Repository structure
 
-```         
+```
 rag-ucdp/
 ├── README.md                       ← you are here (portfolio narrative)
 ├── PROJECT_SUMMARY_UCDP.md         ← deep technical reference
