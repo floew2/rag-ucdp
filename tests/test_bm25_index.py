@@ -236,3 +236,59 @@ def test_save_load_preserves_canonicalize_flag(
     idx2 = BM25Index.load(path)
     assert idx2.canonicalize is True
     assert idx2.stem is False and idx2.remove_stopwords is False
+
+
+# --- v009 BM25 metadata pre-filtering (allowed_ids mask before top-k) ---
+
+
+def _toy_index() -> "BM25Index":
+    ids = ["a", "b", "c", "d"]
+    docs = [
+        "missile strike on Donetsk",
+        "missile strike on Kyiv",
+        "missile strike on Kharkiv",
+        "drone over Lviv",
+    ]
+    return BM25Index(ids, docs)
+
+
+def test_allowed_ids_restricts_results_to_in_scope() -> None:
+    """allowed_ids masks out-of-scope docs entirely, even if they score high."""
+    idx = _toy_index()
+    res = idx.query("missile strike", top_k=10, allowed_ids={"b", "c"})
+    returned = {r["id"] for r in res}
+    assert returned == {"b", "c"}  # 'a' scores high on "missile strike" but is out of scope
+
+
+def test_allowed_ids_prefilter_beats_postfilter_starvation() -> None:
+    """Pre-filtering surfaces an in-scope doc that a top-k-then-filter would miss.
+
+    With top_k=1 over all docs, the in-scope doc 'c' would be starved by higher-
+    scoring out-of-scope docs under post-filtering. Pre-filtering must still
+    return 'c'.
+    """
+    idx = _toy_index()
+    # Without filter, top-1 for "missile strike" is one of a/b/c (not c necessarily).
+    res = idx.query("missile strike", top_k=1, allowed_ids={"c"})
+    assert [r["id"] for r in res] == ["c"]
+
+
+def test_empty_allowed_ids_is_hard_filter() -> None:
+    """An empty allowed set yields no results (hard filter, no fallback)."""
+    idx = _toy_index()
+    assert idx.query("missile strike", top_k=5, allowed_ids=set()) == []
+
+
+def test_allowed_ids_none_is_unfiltered() -> None:
+    """allowed_ids=None behaves exactly like the original unfiltered query."""
+    idx = _toy_index()
+    assert idx.query("missile strike", top_k=3) == idx.query(
+        "missile strike", top_k=3, allowed_ids=None
+    )
+
+
+def test_prefilter_ranks_are_contiguous() -> None:
+    """Ranks are renumbered 0..n among in-scope survivors, not left with gaps."""
+    idx = _toy_index()
+    res = idx.query("missile strike", top_k=10, allowed_ids={"b", "c"})
+    assert [r["rank"] for r in res] == list(range(len(res)))

@@ -170,6 +170,24 @@ class VectorStore:
             for i in range(len(ids))
         ]
 
+    def get_ids_where(self, where: dict[str, Any]) -> set[str]:
+        """Return the set of all ids whose metadata satisfies the where clause.
+
+        Unlike :meth:`get_by_ids`, this is not scoped to a candidate id list —
+        it returns the *entire* in-scope set for the filter. The retrieval
+        layer uses it to pre-filter BM25: since BM25 has no native metadata
+        filter, the in-scope id set is resolved here and BM25 ranking is
+        restricted to it before top-k selection.
+
+        Args:
+            where: ChromaDB metadata filter.
+
+        Returns:
+            Set of ids matching the filter (possibly empty).
+        """
+        raw = self._collection.get(where=where, include=[])
+        return set(raw["ids"])
+
     def get_by_ids(
         self,
         ids: list[str],

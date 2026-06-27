@@ -236,7 +236,7 @@ def _extract_year_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
     if range_match:
         y1, y2 = int(range_match.group(1)), int(range_match.group(2))
         lo, hi = min(y1, y2), max(y1, y2)
-        return ({"year": {"$gte": lo, "$lte": hi}}, {"year_range": [lo, hi]})
+        return (_year_range_where(lo, hi), {"year_range": [lo, hi]})
 
     matches = YEAR_PATTERN.findall(query)
     if len(matches) == 1:
@@ -245,10 +245,21 @@ def _extract_year_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
     if len(matches) >= 2:
         years = sorted(int(m) for m in matches)
         return (
-            {"year": {"$gte": years[0], "$lte": years[-1]}},
+            _year_range_where(years[0], years[-1]),
             {"year_range": [years[0], years[-1]]},
         )
     return ({}, {})
+
+
+def _year_range_where(lo: int, hi: int) -> dict[str, Any]:
+    """Build a ChromaDB-valid year-range clause.
+
+    ChromaDB requires each operator expression to hold exactly one operator, so
+    a range cannot be ``{"year": {"$gte": lo, "$lte": hi}}``; it must be an
+    ``$and`` of two single-operator clauses. ``apply_filters`` (pandas) accepts
+    this form identically.
+    """
+    return {"$and": [{"year": {"$gte": lo}}, {"year": {"$lte": hi}}]}
 
 
 def _extract_country_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -300,15 +311,24 @@ def _extract_oblast_filter(query: str) -> tuple[dict[str, Any], dict[str, Any]]:
 def _combine_filters(*filters: dict[str, Any]) -> dict[str, Any]:
     """Combine non-empty ChromaDB where clauses with ``$and``.
 
-    ChromaDB requires ``$and`` to have at least two operands, so for a single
-    non-empty filter we return it unwrapped.
+    A filter that is itself an ``$and`` (e.g. a year range) is *flattened* into
+    the combined operand list rather than nested, keeping the final clause a
+    single flat ``$and``. ChromaDB requires ``$and`` to have at least two
+    operands, so a single remaining operand is returned unwrapped.
     """
-    non_empty = [f for f in filters if f]
-    if not non_empty:
+    operands: list[dict[str, Any]] = []
+    for f in filters:
+        if not f:
+            continue
+        if set(f.keys()) == {"$and"}:
+            operands.extend(f["$and"])
+        else:
+            operands.append(f)
+    if not operands:
         return {}
-    if len(non_empty) == 1:
-        return non_empty[0]
-    return {"$and": non_empty}
+    if len(operands) == 1:
+        return operands[0]
+    return {"$and": operands}
 
 
 def classify(query: str) -> RouterDecision:

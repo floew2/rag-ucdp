@@ -69,12 +69,12 @@ def test_filter_single_year() -> None:
 
 def test_filter_year_range_between_and() -> None:
     decision = classify("Events between 2022 and 2024")
-    assert decision.filters == {"year": {"$gte": 2022, "$lte": 2024}}
+    assert decision.filters == {"$and": [{"year": {"$gte": 2022}}, {"year": {"$lte": 2024}}]}
 
 
 def test_filter_year_range_from_to() -> None:
     decision = classify("Attacks from 2022 to 2024")
-    assert decision.filters == {"year": {"$gte": 2022, "$lte": 2024}}
+    assert decision.filters == {"$and": [{"year": {"$gte": 2022}}, {"year": {"$lte": 2024}}]}
 
 
 def test_filter_single_oblast() -> None:
@@ -207,3 +207,41 @@ def test_crimea_covers_peninsula() -> None:
     assert decision.filters == {
         "adm_1": {"$in": ["Autonomous Republic of Crimea", "Sevastopol City State Administration"]}
     }
+
+
+# --- v009 year-range must be ChromaDB-valid (single operator per expression) ---
+
+
+def _assert_single_operator(where: dict) -> None:
+    """Mirror ChromaDB's rule: every operator expression has exactly one op."""
+    for key, val in where.items():
+        if key in ("$and", "$or"):
+            for sub in val:
+                _assert_single_operator(sub)
+        elif isinstance(val, dict):
+            assert len(val) == 1, f"multi-operator expression: {val}"
+
+
+def test_year_range_is_chromadb_valid() -> None:
+    """A year range must be an $and of single-operator clauses, not {$gte,$lte}.
+
+    Regression: ChromaDB rejects {"year": {"$gte": lo, "$lte": hi}} ("operator
+    expression must have exactly one operator"). This only surfaced once filters
+    were wired into the eval (v009).
+    """
+    decision = classify("Strikes on energy infrastructure in winter 2022-2023")
+    assert decision.filters == {"$and": [{"year": {"$gte": 2022}}, {"year": {"$lte": 2023}}]}
+    _assert_single_operator(decision.filters)
+
+
+def test_year_range_combined_with_oblast_stays_flat() -> None:
+    """Year range + oblast flatten into one $and, each clause single-operator."""
+    decision = classify("events between 2022 and 2024 in Donetsk")
+    assert decision.filters == {
+        "$and": [
+            {"year": {"$gte": 2022}},
+            {"year": {"$lte": 2024}},
+            {"adm_1": "Donetsk oblast"},
+        ]
+    }
+    _assert_single_operator(decision.filters)

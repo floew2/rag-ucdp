@@ -104,24 +104,6 @@ def reciprocal_rank_fusion(
     return scores
 
 
-def _filter_bm25_by_metadata(
-    bm25_results: list[dict[str, Any]],
-    vector_store: VectorStore,
-    where: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Return only those BM25 results whose metadata satisfies the where clause.
-
-    BM25 has no native metadata filter, so we delegate to ChromaDB by fetching
-    the intersection of the BM25 ids with the where filter.
-    """
-    if not bm25_results:
-        return []
-    bm25_ids = [r["id"] for r in bm25_results]
-    matching = vector_store.get_by_ids(bm25_ids, where=where)
-    valid_ids = set(matching.keys())
-    return [r for r in bm25_results if r["id"] in valid_ids]
-
-
 def hybrid_retrieve(
     query: str,
     embedder: EmbeddingModel,
@@ -149,7 +131,9 @@ def hybrid_retrieve(
         semantic_weight: Weight on the vector (semantic) ranking in fusion.
         bm25_weight: Weight on the BM25 (lexical) ranking in fusion. Only the
             semantic:bm25 ratio matters; 1.0/1.0 is standard equal-weight RRF.
-        where: Optional ChromaDB metadata filter applied to both rankers.
+        where: Optional ChromaDB metadata filter. Pre-filters BOTH rankers
+            before top-k selection: natively on the dense leg, and on the BM25
+            leg by masking to the in-scope id set resolved from the same filter.
 
     Returns:
         Up to ``top_k`` :class:`RetrievalResult` items sorted by descending
@@ -162,10 +146,12 @@ def hybrid_retrieve(
         where=where,
     )
 
-    bm25_raw = bm25.query(query, top_k=bm25_top_k)
-    bm25_results = (
-        _filter_bm25_by_metadata(bm25_raw, vector_store, where) if where is not None else bm25_raw
-    )
+    # Pre-filter BM25: resolve the full in-scope id set from the same `where`
+    # and restrict BM25 ranking to it BEFORE top-k selection (BM25 has no native
+    # metadata filter). This keeps both legs pre-filtered and symmetric — the
+    # dense leg filters natively inside ChromaDB, the sparse leg via this mask.
+    allowed_ids = vector_store.get_ids_where(where) if where is not None else None
+    bm25_results = bm25.query(query, top_k=bm25_top_k, allowed_ids=allowed_ids)
 
     rrf_scores = reciprocal_rank_fusion(
         [vector_results, bm25_results],
