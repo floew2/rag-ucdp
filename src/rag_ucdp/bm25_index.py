@@ -292,17 +292,28 @@ class BM25Index:
         """Return the number of documents in the index."""
         return len(self.ids)
 
-    def query(self, query_text: str, top_k: int = 10) -> list[dict[str, Any]]:
+    def query(
+        self,
+        query_text: str,
+        top_k: int = 10,
+        allowed_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Return the top-k documents by BM25 score for the given query.
 
         Args:
             query_text: Raw query string. Tokenized internally.
             top_k: Number of results to return.
+            allowed_ids: If provided, ranking is restricted to these ids
+                *before* the top-k is selected (true metadata pre-filtering).
+                Scores are computed over the standing full-corpus index (no
+                rebuild); out-of-scope documents are simply skipped, so they
+                can never displace an in-scope document from the result. An
+                empty set yields no results (a hard filter).
 
         Returns:
             List of dicts with keys ``id``, ``score``, ``rank`` (0-indexed),
             in descending score order. Empty list if the query tokenizes to
-            nothing.
+            nothing or no in-scope document scores.
         """
         tokens = tokenize(
             query_text,
@@ -314,15 +325,16 @@ class BM25Index:
             return []
 
         scores = self._bm25.get_scores(tokens)
-        order = scores.argsort()[::-1][:top_k]
-        return [
-            {
-                "id": self.ids[int(i)],
-                "score": float(scores[int(i)]),
-                "rank": rank,
-            }
-            for rank, i in enumerate(order)
-        ]
+        order = scores.argsort()[::-1]
+        results: list[dict[str, Any]] = []
+        for i in order:
+            idx = int(i)
+            if allowed_ids is not None and self.ids[idx] not in allowed_ids:
+                continue
+            results.append({"id": self.ids[idx], "score": float(scores[idx]), "rank": len(results)})
+            if len(results) >= top_k:
+                break
+        return results
 
     def save(self, path: Path) -> None:
         """Pickle the index (ids + BM25Okapi) to disk.

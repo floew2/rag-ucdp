@@ -69,12 +69,12 @@ def test_filter_single_year() -> None:
 
 def test_filter_year_range_between_and() -> None:
     decision = classify("Events between 2022 and 2024")
-    assert decision.filters == {"year": {"$gte": 2022, "$lte": 2024}}
+    assert decision.filters == {"$and": [{"year": {"$gte": 2022}}, {"year": {"$lte": 2024}}]}
 
 
 def test_filter_year_range_from_to() -> None:
     decision = classify("Attacks from 2022 to 2024")
-    assert decision.filters == {"year": {"$gte": 2022, "$lte": 2024}}
+    assert decision.filters == {"$and": [{"year": {"$gte": 2022}}, {"year": {"$lte": 2024}}]}
 
 
 def test_filter_single_oblast() -> None:
@@ -154,3 +154,94 @@ def test_belgorod_canonicalizes_with_oblast_suffix() -> None:
     """Belgorod token must map to 'Belgorod oblast'. Same regression as Kursk."""
     decision = classify("How many events in Belgorod?")
     assert decision.filters == {"adm_1": "Belgorod oblast"}
+
+
+# --- v009 filter-extraction regressions (country-from-actor, city/oblast split) ---
+
+
+def test_country_not_extracted_from_adjective() -> None:
+    """'Russian' is an actor, not a location: it must NOT set country=Russia.
+
+    Regression: 'Russian occupation north of Kyiv' previously extracted
+    country='Russia (Soviet Union)', which excluded the Bucha events
+    (country='Ukraine') entirely. The country filter now fires only on a
+    locative mention (in/into/within/inside <country>).
+    """
+    decision = classify("Civilian killings during Russian occupation north of Kyiv")
+    assert "country" not in decision.filters
+    assert "$and" not in decision.filters  # only the Kyiv oblast clause remains
+
+
+def test_country_extracted_from_locative_into_russia() -> None:
+    """The genuine cross-border case must still set country=Russia."""
+    decision = classify("Cross-border attacks into Russia")
+    assert decision.filters == {"country": "Russia (Soviet Union)"}
+
+
+def test_country_locative_allows_one_intervening_word() -> None:
+    """'in Przewodów Poland' should still resolve to Poland."""
+    decision = classify("Events in Przewodów Poland")
+    assert decision.filters == {"country": "Poland"}
+
+
+def test_country_not_extracted_from_compound() -> None:
+    """'Crimea-Russia' names Russia in a compound, not as the event location."""
+    decision = classify("Crimea-Russia transport link sabotaged")
+    assert "country" not in decision.filters
+
+
+def test_kyiv_covers_city_and_oblast() -> None:
+    """Kyiv must match BOTH adm_1 values the parquet splits it across.
+
+    Regression: mapping 'kyiv' -> 'Kyiv oblast' only excluded events coded
+    'Kyiv Special Republican city' (the city), dropping 3 of 4 Kyiv drone-strike
+    golds once filters were enabled in the eval.
+    """
+    decision = classify("Drone strikes in Kyiv")
+    assert decision.filters == {"adm_1": {"$in": ["Kyiv Special Republican city", "Kyiv oblast"]}}
+
+
+def test_crimea_covers_peninsula() -> None:
+    """'Crimea' means the whole peninsula: ARC + the separately-coded Sevastopol."""
+    decision = classify("Events in Crimea")
+    assert decision.filters == {
+        "adm_1": {"$in": ["Autonomous Republic of Crimea", "Sevastopol City State Administration"]}
+    }
+
+
+# --- v009 year-range must be ChromaDB-valid (single operator per expression) ---
+
+
+def _assert_single_operator(where: dict) -> None:
+    """Mirror ChromaDB's rule: every operator expression has exactly one op."""
+    for key, val in where.items():
+        if key in ("$and", "$or"):
+            for sub in val:
+                _assert_single_operator(sub)
+        elif isinstance(val, dict):
+            assert len(val) == 1, f"multi-operator expression: {val}"
+
+
+def test_year_range_is_chromadb_valid() -> None:
+    """A year range must be an $and of single-operator clauses, not {$gte,$lte}.
+
+    Regression: ChromaDB rejects {"year": {"$gte": lo, "$lte": hi}} ("operator
+    expression must have exactly one operator"). This only surfaced once filters
+    were wired into the eval (v009).
+    """
+    decision = classify("Strikes on energy infrastructure in winter 2022-2023")
+    assert decision.filters == {"$and": [{"year": {"$gte": 2022}}, {"year": {"$lte": 2023}}]}
+    _assert_single_operator(decision.filters)
+
+
+def test_year_range_combined_with_oblast_stays_flat() -> None:
+    """Year range + oblast flatten into one $and, each clause single-operator."""
+    decision = classify("events between 2022 and 2024 in Donetsk")
+    assert decision.filters == {
+        "$and": [
+            {"year": {"$gte": 2022}},
+            {"year": {"$lte": 2024}},
+            {"adm_1": "Donetsk oblast"},
+        ]
+    }
+    _assert_single_operator(decision.filters)
