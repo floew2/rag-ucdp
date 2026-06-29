@@ -6,6 +6,8 @@
 
 ------------------------------------------------------------------------
 
+![Streamlit GUI](docs/img/streamlit-gui.png)
+
 ## What it does
 
 The UCDP Georeferenced Event Dataset is primarily **structured**: every conflict event carries date, coordinates, conflict parties, fatality counts, and categorical fields, all queryable by filter-and-aggregate. What that access pattern *cannot* reach is the **unstructured** `source_headline` field — the news-article text describing named buildings, weapon types, and circumstances that no structured column records.
