@@ -45,6 +45,7 @@ class AggregationKind(str, Enum):  # noqa: UP042
     SUM_CIVILIAN_DEATHS = "sum_civilian_deaths"
     BREAKDOWN_BY_YEAR = "breakdown_by_year"
     BREAKDOWN_BY_OBLAST = "breakdown_by_oblast"
+    REDIRECT = "redirect"
 
 
 #: Column used as the canonical fatality count (UCDP's "best" estimate).
@@ -214,6 +215,8 @@ def execute_structured_query(
     query: str,
     df: pd.DataFrame,
     filters: dict[str, Any] | None = None,
+    *,
+    redirect_notice: str | None = None,
 ) -> StructuredResult:
     """Dispatch a structured query to the appropriate aggregation.
 
@@ -229,10 +232,23 @@ def execute_structured_query(
         query: User query text.
         df: UCDP event DataFrame.
         filters: ChromaDB-style filter dict from the router (optional).
+        redirect_notice: When set, the router could not scope this query to a
+            location (free-text-only city, or any place outside the gazetteers).
+            Aggregating would silently sum the whole corpus, so instead this
+            returns a :data:`AggregationKind.REDIRECT` result carrying the
+            honest message. Path C never passes this, so it is unaffected.
 
     Returns:
         A :class:`StructuredResult`.
     """
+    if redirect_notice is not None:
+        return StructuredResult(
+            kind=AggregationKind.REDIRECT,
+            value=None,
+            filters_applied={},
+            description=redirect_notice,
+        )
+
     filters = filters or {}
     has_civilian = bool(_CIVILIAN_PATTERN.search(query))
     has_fatality = bool(_FATALITY_PATTERN.search(query))
