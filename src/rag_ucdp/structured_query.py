@@ -198,7 +198,7 @@ def breakdown_by(
 # --- Dispatcher ---
 
 _FATALITY_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"\b(fatalit|death|killed|casualt)", re.IGNORECASE
+    r"\b(?:fatal|death|dead\b|die[ds]?\b|dying|kill|casualt|perish)", re.IGNORECASE
 )
 _CIVILIAN_PATTERN: Final[re.Pattern[str]] = re.compile(r"\bcivilian", re.IGNORECASE)
 _BY_YEAR_PATTERN: Final[re.Pattern[str]] = re.compile(

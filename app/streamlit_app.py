@@ -12,7 +12,7 @@ This is the user-facing demo that ties everything together:
 - Hybrid path C (retrieve subset + aggregate)
 - Source bias surfacing (Simpson's diversity, dominance flag)
 - Geospatial visualization (folium map)
-- Mistral 7B via local Ollama
+- Local LLM (llama3.2:3b) via Ollama
 
 Resources are loaded once via Streamlit's :func:`st.cache_resource` and
 reused across queries. The embedder is warmed up at startup so the first
@@ -32,7 +32,7 @@ from streamlit_folium import st_folium
 from rag_ucdp.bm25_index import BM25Index
 from rag_ucdp.data_loading import load_processed
 from rag_ucdp.embeddings import EmbeddingModel
-from rag_ucdp.generation import MistralGenerator, build_refusal
+from rag_ucdp.generation import DEFAULT_MODEL, MistralGenerator, build_refusal
 from rag_ucdp.hybrid_path import execute_hybrid_path
 from rag_ucdp.maps import make_event_map, retrieval_results_to_dataframe
 from rag_ucdp.retrieval import RetrievalResult, hybrid_retrieve
@@ -66,6 +66,12 @@ EXAMPLE_QUERIES = {
     "C · Hybrid": "How many attacks on energy infrastructure in 2023?",
     "D · Refusal": "Why did Russia invade Ukraine?",
 }
+
+#: Events retrieved on Path A for evidence / map / source-bias panels.
+RETRIEVAL_TOP_K = 10
+#: Of those, how many are placed in the LLM prompt as cited context. The
+#: evidence panel marks which events were sent so the funnel is transparent.
+PROMPT_TOP_K = 5
 
 
 def _diversity_gauge_html(simpsons_index: float, label: str) -> str:
@@ -142,7 +148,7 @@ def data_is_ready() -> bool:
 
 def render_router_decision(decision: RouterDecision) -> None:
     """Show the router's classification in a compact way."""
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2 = st.columns([1, 3])
     with col1:
         st.metric("Router path", PATH_LABELS[decision.path])
     with col2:
@@ -151,8 +157,6 @@ def render_router_decision(decision: RouterDecision) -> None:
             st.code(str(decision.filters), language="python")
         else:
             st.caption("No filters extracted from the query.")
-    with col3:
-        st.metric("Confidence", decision.confidence.title())
 
 
 def render_source_bias_panel(events_df: pd.DataFrame, lookup: SourceAffiliationLookup) -> None:
@@ -178,23 +182,50 @@ def render_source_bias_panel(events_df: pd.DataFrame, lookup: SourceAffiliationL
     st.bar_chart(breakdown.set_index("affiliation"))
 
 
-def render_evidence_panel(retrieval_results: list[RetrievalResult]) -> None:
-    """Show the top retrieved events as expandable cards."""
+def render_evidence_panel(
+    retrieval_results: list[RetrievalResult],
+    prompt_top_k: int | None = None,
+    cited_ids: list[str] | None = None,
+) -> None:
+    """Show the top retrieved events as expandable cards.
+
+    When ``prompt_top_k`` is given (Path A), the panel makes the retrieve →
+    prompt → cite funnel explicit: all retrieved events are listed, the first
+    ``prompt_top_k`` are marked as sent to the model (★), and any the model
+    actually cited are marked (✓). ``cited_ids`` are the event ids parsed from
+    the answer. On paths without generation (C) both are omitted.
+    """
     st.subheader("Evidence")
     if not retrieval_results:
         st.info("No events retrieved.")
         return
 
-    for i, r in enumerate(retrieval_results[:10], 1):
+    shown = retrieval_results[:RETRIEVAL_TOP_K]
+    cited = set(cited_ids or [])
+    if prompt_top_k is not None:
+        sent = min(prompt_top_k, len(shown))
+        st.caption(
+            f"{len(shown)} events retrieved · top {sent} sent to the model as "
+            f"context · cited = events the model referenced.  ★ sent to model · "
+            f"✓ cited in the answer."
+        )
+
+    for i, r in enumerate(shown, 1):
         meta = r.metadata
+        marks = ""
+        if prompt_top_k is not None and i <= prompt_top_k:
+            marks += " ★"
+        if r.id in cited:
+            marks += " ✓"
         title = (
-            f"#{i} · {meta.get('date_start', '?')} · "
-            f"{meta.get('adm_1', '?')} · RRF {r.rrf_score:.3f}"
+            f"#{i} · event {r.id} · {meta.get('date_start', '?')} · "
+            f"{meta.get('adm_1', '?')} · RRF {r.rrf_score:.3f}{marks}"
         )
         with st.expander(title):
             st.text(r.document)
             st.caption(
-                f"vector_rank={r.vector_rank}, bm25_rank={r.bm25_rank}, "
+                f"event id={r.id} · vector_rank={r.vector_rank} · "
+                f"bm25_rank={r.bm25_rank} · "
                 f"sources: {meta.get('source_office_joined', '?')}"
             )
 
@@ -228,12 +259,12 @@ def execute_path_a(query: str, decision: RouterDecision, resources: dict[str, An
             embedder=resources["embedder"],
             vector_store=resources["vector_store"],
             bm25=resources["bm25"],
-            top_k=10,
+            top_k=RETRIEVAL_TOP_K,
             where=decision.filters or None,
         )
 
     with st.spinner(f"Generating answer with {resources['generator'].model}..."):
-        gen_result = resources["generator"].generate(query, results, top_k=5)
+        gen_result = resources["generator"].generate(query, results, top_k=PROMPT_TOP_K)
 
     st.subheader("Answer")
     if gen_result.error:
@@ -252,7 +283,7 @@ def execute_path_a(query: str, decision: RouterDecision, resources: dict[str, An
     with col2:
         render_source_bias_panel(events_df, resources["lookup"])
 
-    render_evidence_panel(results)
+    render_evidence_panel(results, prompt_top_k=PROMPT_TOP_K, cited_ids=gen_result.sources_cited)
 
     with st.expander("🔧 Debug: prompt sent to the model"):
         st.code(gen_result.prompt, language=None)
@@ -382,8 +413,8 @@ def main() -> None:
     st.markdown(
         "Hybrid retrieval over UCDP GED conflict events. "
         "Quantitative queries go to deterministic aggregation; semantic "
-        "queries go to Mistral 7B + hybrid retrieval. Source bias is "
-        "surfaced explicitly."
+        f"queries go to a local LLM ({DEFAULT_MODEL}) over hybrid retrieval. "
+        "Source bias is surfaced explicitly."
     )
 
     if not data_is_ready():
