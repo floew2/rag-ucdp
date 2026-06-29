@@ -38,7 +38,11 @@ from rag_ucdp.maps import make_event_map, retrieval_results_to_dataframe
 from rag_ucdp.retrieval import RetrievalResult, hybrid_retrieve
 from rag_ucdp.router import RouterDecision, RouterPath, classify
 from rag_ucdp.source_bias import SourceAffiliationLookup, compute_source_bias
-from rag_ucdp.structured_query import apply_filters, execute_structured_query
+from rag_ucdp.structured_query import (
+    AggregationKind,
+    apply_filters,
+    execute_structured_query,
+)
 from rag_ucdp.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -256,10 +260,26 @@ def execute_path_a(query: str, decision: RouterDecision, resources: dict[str, An
 
 def execute_path_b(query: str, decision: RouterDecision, resources: dict[str, Any]) -> None:
     """Path B: structured aggregation, no LLM."""
-    result = execute_structured_query(query, resources["df"], decision.filters)
+    notice = (
+        decision.extracted.get("notice")
+        if decision.extracted.get("structured_unavailable")
+        else None
+    )
+    result = execute_structured_query(
+        query, resources["df"], decision.filters, redirect_notice=notice
+    )
 
     st.subheader("Answer")
+    if result.kind is AggregationKind.REDIRECT:
+        # Free-text-only city or unrecognized place: the router declined to
+        # aggregate rather than silently sum the whole corpus.
+        st.warning(result.description)
+        return
     st.markdown(f"**{result.description}**")
+    # "No black box": disclose that a city-scoped count is raion-level (broader
+    # than the city proper).
+    if decision.extracted.get("scope_note"):
+        st.caption(f"Scope: {decision.extracted['scope_note']}")
 
     if result.breakdown is not None:
         render_breakdown_chart(result.breakdown)
