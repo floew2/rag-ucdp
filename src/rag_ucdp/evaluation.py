@@ -646,11 +646,22 @@ def run_generation_track(
     vector_store: Any,
     bm25: Any,
     generator: Any,
-    top_k: int = 10,
+    prompt_top_k: int = 10,
+    retrieval_depth: int | None = None,
 ) -> GenerationMetrics:
-    """Evaluate generation end-to-end (retrieve → generate) at production depth."""
+    """Evaluate generation end-to-end (retrieve → generate).
+
+    ``prompt_top_k`` is how many retrieved events are placed in the LLM prompt;
+    ``retrieval_depth`` is how many are retrieved (defaults to ``prompt_top_k``).
+    For the prompt-depth ablation (v011), fix ``retrieval_depth`` at the deepest
+    level and vary ``prompt_top_k`` so retrieval is held constant and only the
+    prompt slice changes. Citation faithfulness is scored against the prompt
+    slice (the events the model could actually see), not the full retrieved set.
+    """
     from rag_ucdp.retrieval import hybrid_retrieve
     from rag_ucdp.router import classify
+
+    depth = retrieval_depth if retrieval_depth is not None else prompt_top_k
 
     def _pipeline(query: str) -> tuple[str, list[str]]:
         where = classify(query).filters or None
@@ -659,11 +670,11 @@ def run_generation_track(
             embedder=embedder,
             vector_store=vector_store,
             bm25=bm25,
-            top_k=top_k,
+            top_k=depth,
             where=where,
         )
-        gen_result = generator.generate(query=query, retrieval_results=results)
-        return gen_result.answer, [r.id for r in results]
+        gen_result = generator.generate(query=query, retrieval_results=results, top_k=prompt_top_k)
+        return gen_result.answer, [r.id for r in results[:prompt_top_k]]
 
     return evaluate_generation(items, _pipeline, embedder=embedder)
 
