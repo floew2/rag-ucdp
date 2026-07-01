@@ -2,7 +2,7 @@
 
 > Routed RAG (Hybrid: BM25 - Semantic - RRF), with a query router at the front of the pipeline. Implemented over the UCDP Georeferenced Event Dataset, with rule-based query routing, source-bias surfacing, and geospatial visualization of retrieved events. Scoped to the Ukraine conflict (2022+, \~28,531 events) and designed for a human-rights NGO context.
 
-[![tests](https://img.shields.io/badge/tests-195%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.12-blue)](#prerequisites) [![license](https://img.shields.io/badge/code-MIT-green)](#license) [![data](https://img.shields.io/badge/data-CC--BY--4.0-lightgrey)](#data-and-citations)
+[![tests](https://img.shields.io/badge/tests-214%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.12-blue)](#prerequisites) [![license](https://img.shields.io/badge/code-MIT-green)](#license) [![data](https://img.shields.io/badge/data-CC--BY--4.0-lightgrey)](#data-and-citations)
 
 ------------------------------------------------------------------------
 
@@ -21,16 +21,16 @@ Key features:
 3.  **Geospatial visualization** (an NGO requirement) — Folium maps overlay retrieved events on Ukrainian territory, making spatial context and cross-border events (Kursk, Belgorod, Poland) visible at a glance.
 
 
-### Headline metrics (baseline, v009 — filtered production path)
+### Headline metrics (baseline, v010)
 
 | Track | Metric | Test set |
-|------------------------|------------------------|------------------------|
+|------------------|----------------------------------|------------------------|
 | Router | accuracy 0.840 · macro-F1 0.852 | n=50 |
-| Structured | **30/30** exact-match (all canonicalization bugs fixed) | n=30 |
-| Retrieval (hybrid) | HR@10 0.867 · MRR@10 0.640 · set-Recall@10 0.686 · Recall@25 0.827 | n=30 |
-| Generation | mean SAS 0.742 · citation faithfulness 1.00 · 0% Poor | n=20 |
+| Structured | 54/54 exact-match | n=54 |
+| Retrieval (hybrid) | [HR\@10](mailto:HR@10){.email} 0.867 · [MRR\@10](mailto:MRR@10){.email} 0.638 · [set-Recall\@10](mailto:set-Recall@10){.email} 0.659 · [set-Recall\@25](mailto:set-Recall@25){.email} 0.802 | n=30 |
+| Generation | mean SAS 0.743 · citation faithfulness 1.00 | n=20 |
 
-*v009 replaced the earlier v003–v008 baseline, which evaluated with the router's metadata filter inadvertently disabled (`where=None`). v009 wires the eval to the real filtered path and fixes the three filter bugs that exposed — see [Evaluation](#evaluation) and the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).*
+*Note: v010 is the current baseline. See [Evaluation](#evaluation) and the v009/v010 entries in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).*
 
 ### Stack
 
@@ -113,10 +113,9 @@ flowchart LR
 
 Both legs draw their candidate pool from a **prebuilt store** — the dense leg from ChromaDB (vectors + metadata), the sparse leg from `bm25/index.pkl` — and the same router-extracted `where` dict **pre-filters both** to in-scope events *before* each ranker selects its top pool. The dense leg filters natively inside ChromaDB; the sparse leg filters by masking BM25 scores to the in-scope id set before truncation (no index rebuild). The identical `where` also drives `structured_query.apply_filters` on path B — **one filter shape, three execution engines**. The filter is a hard pre-scope (exact match on categorical fields); the rankers order only what survives it.
 
-
 ### BM25 tokenization — what ships vs what was tested
 
-The lexical branch is a deliberately minimal baseline. Lowercasing and regex tokenization are the only preprocessing in production; every other standard lever was tested as a single-knob experiment and **not adopted** (full numbers in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md)).
+The lexical branch is a deliberately minimal baseline. Lowercasing and regex tokenization are the only preprocessing in production; every other standard lever (e.g. stemming, stopword removal) was tested as a single-knob experiment and **not adopted** (full numbers in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md)).
 
 ``` mermaid
 flowchart LR
@@ -141,11 +140,11 @@ flowchart LR
 | Stopword removal | tested (v004) | not adopted — redundant with BM25's IDF term, which already down-weights high-document-frequency tokens |
 | Alias canonicalization | tested (v006) | not adopted **for BM25** — UCDP records already carry both spellings in the same event, so folding adds no matches and slightly perturbs scores. *Adopted for the router*, where it fixes oblast filters (structured 30/30). |
 
-Flags for stemming, stopword removal, and canonicalization remain in `bm25_index.py` (off by default), persisted on the index so index-time and query-time tokenization stay symmetric — useful for future NGO data that may lack UCDP's spelling redundancy.
+Flags for stemming, stopword removal, and canonicalization remain in `bm25_index.py` (off by default, can be activated anytime), persisted on the index so index-time and query-time tokenization stay symmetric — useful for future NGO data that may lack UCDP's spelling redundancy.
 
 ### Router (strict priority — first match wins)
 
-```
+```         
 1. REFUSAL keywords present              → Path D (Refusal)
 2. AGGREGATION keywords present
      2a. AND semantic concept present    → Path C (Hybrid)
@@ -203,13 +202,13 @@ uv run jupyter notebook notebooks/11_evaluation.ipynb   # four-track eval + abla
 ### Tests {#tests}
 
 ``` bash
-uv run pytest                        # full suite (195 tests, <15 s)
+uv run pytest                        # full suite (214 tests, <15 s)
 uv run pytest tests/test_router.py   # a single file
 ```
 
 ------------------------------------------------------------------------
 
-## Evaluation
+## Evaluation {#evaluation}
 
 The evaluation is the project's analytical core. Four tracks each target a different component with the metric that fits it: the **router** (classification accuracy / macro-F1), the **structured** path-B aggregation (exact-match), the **retriever** (HR\@k · MRR\@k · set-Recall\@k), and the **generator** (SAS · citation faithfulness). Every test item also carries a **category tag** (e.g. factual, paraphrased, landmark, infrastructure, atrocity, refusal), so each track breaks down per category — which is what turns a single aggregate number into actionable error analysis (the paraphrase regression below was found this way, not in the headline metric).
 
@@ -223,12 +222,12 @@ Each test set has **two tiers**: a curated set (representative use cases, i.e. q
 
 -   **Generation** — refusals, hard paraphrases, multi-event synthesis.
 
-**Experiments** in this project were versionized. A **version** (v003, v004, …) is a distinct *system configuration* — a specific set of components and knobs — evaluated against the **same fixed test sets**, so differences between versions reflect the design change, not a change in what's being measured. From **v003** onward the evaluation doubles as a **single-knob ablation log**: each later version changes exactly one knob against the v003 baseline, so any metric movement is attributable to that knob. The full per-version detail (setup, deltas, mechanisms, verdicts) lives in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
+**Experiments** in this project were versionized. A **version** (v003, v004, …) is a distinct *system configuration* — a specific set of components and knobs — evaluated against the **same fixed test sets**, so differences between versions reflect the design change, not a change in what's being measured. The full per-version detail (setup, deltas, mechanisms, verdicts) lives in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
 
 ### Ablation summary — effective top-10 retrieval (Δ vs v003, n=30)
 
-| version | knob changed | HR\@10 | MRR\@10 | Rec\@10 | SAS | verdict |
-|------------|------------|------------|------------|------------|------------|------------|
+| version | knob changed | HR\@10 | MRR\@10 | set-Rec\@10 | SAS | verdict |
+|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
 | **v003** | vanilla baseline (hybrid) | 0.867 | 0.622 | 0.686 | 0.715 | reference |
 | v004 | BM25 stemming + stopword removal | 0.833 | 0.604 | 0.666 | —ᵃ | not adopted (net-negative) |
 | v005 | weighted RRF (sweep) | 0.867 | 0.622 | 0.686 | 0.729ᵇ | not adopted (1:1 is best) |
@@ -237,17 +236,18 @@ Each test set has **two tiers**: a curated set (representative use cases, i.e. q
 | v008 | \+ cross-encoder rerank (BGE) | 0.833 | 0.571 | 0.573 | —ᶜ | not adopted (stronger model is worse) |
 | **v009** | **filtered harness + BM25 pre-filter (new baseline)** | 0.867 | 0.640 | 0.686 | 0.742 | **adopted** (supersedes v003) |
 
-*SAS is a **generation-track** metric (n=20, separate test set), included here for convenience; it is non-deterministic (temperature > 0), so cross-version deltas below ~0.02 are sampling noise, not knob effects. ᵃ v004's generation run was void (Ollama down → empty answers); not re-measured. ᵇ within ±0.02 of v003 — generation was unchanged in these retrieval experiments, so the move is context jitter, not signal. ᶜ generation not re-run for the reranker experiments (retrieval-only). The only clean, comparable SAS points are v003 (0.715) and v009 (0.742).*
+*SAS is a **generation-track** metric (n=20, separate test set), included here for convenience; it is non-deterministic (temperature \> 0), so cross-version deltas below \~0.02 are sampling noise, not knob effects. ᵃ v004's generation run was void (Ollama down → empty answers); not re-measured. ᵇ within ±0.02 of v003 — generation was unchanged in these retrieval experiments, so the move is context jitter, not signal. ᶜ generation not re-run for the reranker experiments (retrieval-only). The only clean, comparable SAS points are v003 (0.715) and v009 (0.742).*
 
-The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* harness. **v009 is different in kind:** it corrects the harness so evaluation exercises the production *filtered* path (the router's `where` filter was previously inactive in eval), then fixes the three filter bugs that correction exposed — country-from-actor over-reach (now locative-only), the Kyiv city/oblast split (now `$in [oblast, city]`), and the ChromaDB-invalid year-range shape — and moves BM25 from post- to pre-filtering. It is therefore a **new reference point, not a single-knob delta**: HR@10/Rec@10 are unchanged (most queries carry no filter), MRR@10 improves (+0.018) where filters tighten the in-scope set. v009 is now the headline baseline; v003–v008 remain valid relative to each other. Full account — including the *administrative-boundary* limitation it documents — is the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
+The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* harness. **v009 is different in kind:** it corrects the harness so evaluation exercises the production *filtered* path (the router's `where` filter was previously inactive in eval), then fixes the three filter bugs that correction exposed — country-from-actor over-reach (now locative-only), the Kyiv city/oblast split (now `$in [oblast, city]`), and the ChromaDB-invalid year-range shape — and moves BM25 from post- to pre-filtering. It is therefore a **new reference point, not a single-knob delta**: [HR\@10](mailto:HR@10){.email}/[set-Recall\@10](mailto:set-Recall@10){.email} are unchanged (most queries carry no filter), [MRR\@10](mailto:MRR@10){.email} improves (+0.018) where filters tighten the in-scope set. v009 established the filtered-path baseline; **v010** then re-evaluates that same configuration under the finalized harness (30/30 candidate pool, structured set expanded to 54) and is the current headline baseline — retrieval logic is unchanged from v009, so the small set-Recall / MRR shifts are the deeper-pool measurement, not a knob. v003–v008 remain valid relative to each other. Full account — including the *administrative-boundary* limitation it documents — is the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
 
 ------------------------------------------------------------------------
 
 ## Limitations
 
--   **No LLM-based router, query expansion, or adopted reranker.** The rule-based router's B-as-A/D-as-A gaps and the tier-4 paraphrase failures remain; query expansion (with an explicit transparency cost) is the documented next lever. Cross-encoder reranking was tested and rejected.
+-   **No LLM-based or semantic router, query expansion, or adopted reranker.** The rule-based router's B-as-A/D-as-A gaps and the tier-4 paraphrase failures remain; query expansion (with an explicit transparency cost) is the documented next lever. Cross-encoder reranking was tested and rejected.
 -   **BM25 uses no stemming or stopword removal** — a deliberate baseline; the ablation (v004) showed it nets slightly negative here.
 -   **Modest test-set sizes** (n=20–50 per track). Adequate to surface failure modes; not for tight confidence intervals. Single-pass, no cross-validation.
+-   **set-Recall is measured against a partially circular gold set.** The gold events were pooled from the retrieval system's own top-k output, so set-Recall is biased optimistic — a relevant event the retriever never surfaces cannot enter the gold. A method-independent rebuild is in progress: candidates pooled across five diverse retrieval arms (BM25, dense, RRF, HyDE, multi-query), blind-labeled, with NGO validation (Cohen's κ) pending — early results quantify the recall headroom the production retriever misses.
 -   **Generation eval is path-A-isolated**, by design — it measures LLM quality given retrieved context, not end-to-end routing behavior.
 -   **Hard `adm_1` filters exclude across-boundary events.** A metadata filter scoped to one oblast drops genuinely relevant events coded *just across* an administrative line from the queried place — e.g. a ZNPP event coded to the Dnipropetrovsk/Nikopol bank (the Dnipro river is the oblast boundary), or the Krasnodar-side strike on the Kerch bridge. The filter is correct *per its predicate*; the predicate is narrower than user intent. Surfaced and documented in v009 (kept in the gold, not trimmed).
 -   **English-only embeddings.** BGE-large-en-v1.5; UCDP headlines are predominantly English but contain transliterated terms whose spelling variants (Odesa/Odessa, Kyiv/Kiev) affect retrieval.
@@ -258,7 +258,7 @@ The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* h
 
 ## Repository structure
 
-```
+```         
 rag-ucdp/
 ├── README.md                       ← you are here (portfolio narrative)
 ├── PROJECT_SUMMARY_UCDP.md         ← deep technical reference
@@ -270,15 +270,15 @@ rag-ucdp/
 │   └── chroma_db/ · bm25/          ← gitignored, Colab-built
 ├── evals/
 │   ├── router · structured · retrieval · generation .yaml   ← two-tier test sets
-│   ├── results_v001.json … v008.json                        ← per-version outputs
+│   ├── results_v001.json … v011.json                        ← per-version outputs
 │   └── RESULTS_CHANGELOG.md                                  ← single-knob ablation log
-├── notebooks/                      ← 01_data_exploration · 02_indexing · colab_indexing · 11_evaluation
+├── notebooks/                      ← 01_data_exploration · 02_indexing · colab_indexing · 10_hand_labeling · 11_evaluation · 12_pooling
 ├── notes/anchor-token-finding.md   ← deep dive on the paraphrase failure
 ├── src/rag_ucdp/                   ← data_loading · preprocessing · embeddings · vector_store ·
 │                                     bm25_index · retrieval · router · structured_query · hybrid_path ·
 │                                     source_bias · maps · canonicalization · reranking · generation · evaluation
 ├── app/streamlit_app.py
-└── tests/                          ← 195 tests, <15 s
+└── tests/                          ← 214 tests, <15 s
 ```
 
 ------------------------------------------------------------------------
