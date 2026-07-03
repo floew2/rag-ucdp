@@ -23,11 +23,12 @@ the codebase. :func:`load_test_set` parses them into the relevant dataclass.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -195,10 +196,9 @@ def set_recall(predicted_ids: list[str], gold_ids: list[str], k: int) -> float:
 def precision_at_k(predicted_ids: list[str], gold_ids: list[str], k: int) -> float:
     """Precision@k = ``|gold ∩ top-k| / k`` — the relevant fraction of the top-k.
 
-    Only meaningful when the gold set is dense enough (``|gold| >= k`` for at
-    least some queries); against a sparse gold set Precision@k is dominated by
-    the gold-set size rather than ranking quality. Use :func:`r_precision` to
-    remove that ceiling.
+    Only meaningful when the gold set is dense enough; against a sparse gold set
+    Precision@k is dominated by the gold-set size rather than ranking quality.
+    Use :func:`r_precision` to remove that ceiling.
     """
     if k <= 0:
         return 0.0
@@ -212,7 +212,7 @@ def r_precision(predicted_ids: list[str], gold_ids: list[str]) -> float:
 
     Normalises away the top-k ceiling that :func:`precision_at_k` suffers when a
     query has fewer than ``k`` relevant events (e.g. single-gold known-item
-    queries). Returns 0.0 when the gold set is empty.
+    queries). Returns 0.0 when the gold set is empty. Independent of the eval k.
     """
     gold_set = {str(g) for g in gold_ids}
     r = len(gold_set)
@@ -286,7 +286,7 @@ def evaluate_retrieval(
     for item in test_items:
         predicted = retrieve_fn(item.query)
         # Graded relevance for nDCG: use the item's graded map when present,
-        # otherwise fall back to treating each gold id as grade 1 (binary).
+        # else treat each gold id as grade 1 (binary fallback).
         relevance = item.relevance or {g: 1 for g in item.gold_ids}
         h = hit_rate(predicted, item.gold_ids, k)
         m = mean_reciprocal_rank(predicted, item.gold_ids, k)
@@ -586,3 +586,240 @@ def evaluate_structured(
         n_queries=len(test_items),
         per_query=per_query,
     )
+
+
+# ---------------------------------------------------------------------------
+# Evaluation runners and orchestration
+#
+# These wrap the system's production code paths (router → structured/retrieval/
+# generation) into the callables the `evaluate_*` functions expect, and run a
+# whole track end-to-end. They live here, not in the notebook, so that
+# `evaluation.py` is the single source of truth for *what the evaluation does*;
+# the notebook only loads resources, calls these, and renders the results.
+#
+# System modules are imported lazily inside each function so that importing
+# `evaluation.py` does not pull in the heavy retrieval stack (ChromaDB, etc.).
+# ---------------------------------------------------------------------------
+
+
+def run_router_track(items: list[Any]) -> RouterMetrics:
+    """Evaluate the router track against the production `classify`.
+
+    The grader compares a path string ("A"/"B"/"C"/"D"), so the router decision
+    is reduced to ``classify(query).path.value``.
+    """
+    from rag_ucdp.router import classify
+
+    return evaluate_router(items, lambda q: classify(q).path.value)
+
+
+def run_structured_query_for_eval(query: str, df: pd.DataFrame) -> Any:
+    """Production path-B execution, reduced to the value the grader compares.
+
+    Mirrors the app: router extracts filters; a free-text-only city or an
+    unrecognized place is redirected (the router sets ``structured_unavailable``)
+    rather than aggregated, and maps to :data:`REDIRECT_SENTINEL`. Breakdowns are
+    returned as ``{group: count}`` dicts; scalars as their value.
+    """
+    from rag_ucdp.router import classify
+    from rag_ucdp.structured_query import AggregationKind, execute_structured_query
+
+    decision = classify(query)
+    notice = (
+        decision.extracted.get("notice")
+        if decision.extracted.get("structured_unavailable")
+        else None
+    )
+    result = execute_structured_query(query, df, filters=decision.filters, redirect_notice=notice)
+    if result.kind is AggregationKind.REDIRECT:
+        return REDIRECT_SENTINEL
+    if result.breakdown is not None:
+        key_col = result.breakdown.columns[0]
+        return dict(
+            zip(
+                result.breakdown[key_col].astype(str),
+                result.breakdown["count"].astype(int),
+                strict=True,
+            )
+        )
+    return result.value
+
+
+def run_structured_track(items: list[Any], df: pd.DataFrame) -> StructuredMetrics:
+    """Evaluate the structured track over ``df`` using the production path."""
+    return evaluate_structured(items, lambda q: run_structured_query_for_eval(q, df))
+
+
+def make_retriever(
+    embedder: EmbeddingModel,
+    vector_store: Any,
+    bm25: Any,
+    depth: int,
+    pool_size: int = 30,
+) -> Callable[[str], list[str]]:
+    """Build the production filtered retriever used by the eval.
+
+    Returns a ``query -> [doc_id, ...]`` callable that applies the router's
+    ``where`` filter (as in production) and retrieves to ``depth``. Exposed so
+    ad-hoc analyses (e.g. a paraphrase-only subset) reuse the exact same path as
+    the full retrieval track instead of redefining it.
+
+    Each candidate leg (dense, BM25) is sized to ``max(pool_size, depth)`` so the
+    fused unique pool can always fill ``depth`` even under full overlap — a
+    requirement for scoring at the deepest k (e.g. k=25 needs >=25 unique
+    candidates). Note this fixes the legs at the *eval* pool, independent of the
+    20/20 production defaults baked into ``hybrid_retrieve``.
+    """
+    from rag_ucdp.retrieval import hybrid_retrieve
+    from rag_ucdp.router import classify
+
+    pool = max(pool_size, depth)
+
+    def _retrieve(query: str) -> list[str]:
+        where = classify(query).filters or None
+        results = hybrid_retrieve(
+            query=query,
+            embedder=embedder,
+            vector_store=vector_store,
+            bm25=bm25,
+            top_k=depth,
+            semantic_top_k=pool,
+            bm25_top_k=pool,
+            where=where,
+        )
+        return [r.id for r in results]
+
+    return _retrieve
+
+
+def run_retrieval_track(
+    items: list[Any],
+    embedder: EmbeddingModel,
+    vector_store: Any,
+    bm25: Any,
+    k_values: list[int],
+    pool_size: int = 30,
+) -> dict[int, RetrievalMetrics]:
+    """Evaluate retrieval at each k, exercising the production *filtered* path.
+
+    Retrieves once to ``max(k_values)`` depth per query (the router's ``where``
+    filter applied, as in production) with each leg sized to
+    ``max(pool_size, max(k_values))``, then scores at every k. Returns a
+    ``{k: RetrievalMetrics}`` mapping.
+    """
+    retrieve = make_retriever(
+        embedder, vector_store, bm25, depth=max(k_values), pool_size=pool_size
+    )
+    return {k: evaluate_retrieval(items, retrieve, k=k) for k in k_values}
+
+
+def run_generation_track(
+    items: list[Any],
+    embedder: EmbeddingModel,
+    vector_store: Any,
+    bm25: Any,
+    generator: Any,
+    prompt_top_k: int = 10,
+    retrieval_depth: int | None = None,
+) -> GenerationMetrics:
+    """Evaluate generation end-to-end (retrieve → generate).
+
+    ``prompt_top_k`` is how many retrieved events are placed in the LLM prompt;
+    ``retrieval_depth`` is how many are retrieved (defaults to ``prompt_top_k``).
+    For the prompt-depth ablation (v011), fix ``retrieval_depth`` at the deepest
+    level and vary ``prompt_top_k`` so retrieval is held constant and only the
+    prompt slice changes. Citation faithfulness is scored against the prompt
+    slice (the events the model could actually see), not the full retrieved set.
+    """
+    from rag_ucdp.retrieval import hybrid_retrieve
+    from rag_ucdp.router import classify
+
+    depth = retrieval_depth if retrieval_depth is not None else prompt_top_k
+
+    def _pipeline(query: str) -> tuple[str, list[str]]:
+        where = classify(query).filters or None
+        results = hybrid_retrieve(
+            query=query,
+            embedder=embedder,
+            vector_store=vector_store,
+            bm25=bm25,
+            top_k=depth,
+            where=where,
+        )
+        gen_result = generator.generate(query=query, retrieval_results=results, top_k=prompt_top_k)
+        return gen_result.answer, [r.id for r in results[:prompt_top_k]]
+
+    return evaluate_generation(items, _pipeline, embedder=embedder)
+
+
+# --- Results serialization ---
+
+
+def _to_serialisable(obj: Any) -> Any:
+    """Convert dataclasses, DataFrames, and Paths to JSON-serialisable form."""
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return _to_serialisable(asdict(obj))
+    if isinstance(obj, dict):
+        return {k: _to_serialisable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_serialisable(v) for v in obj]
+    if isinstance(obj, pd.DataFrame):
+        return obj.to_dict(orient="index")
+    if isinstance(obj, Path):
+        return str(obj)
+    return obj
+
+
+def build_results_payload(
+    *,
+    router_metrics: RouterMetrics,
+    structured_metrics: StructuredMetrics,
+    retrieval_by_k: dict[int, RetrievalMetrics],
+    generation_metrics: GenerationMetrics | None,
+    embedding_model: str,
+    generation_model: str | None,
+    k_values: list[int],
+) -> dict[str, Any]:
+    """Assemble the full results payload dumped to ``results_vNNN.json``.
+
+    The retrieval block carries ``hit_rate_at_k``, ``mrr_at_k`` and
+    ``recall_at_k`` (set-Recall) for every evaluated k. ``per_query`` is taken
+    from the **deepest** k so ``predicted_top_k`` is stored at full depth and
+    set-Recall is recomputable at any k <= max(k_values).
+    """
+    depth = max(k_values)
+    deepest = retrieval_by_k[depth]
+    return {
+        "router": _to_serialisable(router_metrics),
+        "structured": _to_serialisable(structured_metrics),
+        "retrieval": {
+            "hit_rate_at_k": {k: m.hit_rate_at_k for k, m in retrieval_by_k.items()},
+            "mrr_at_k": {k: m.mrr_at_k for k, m in retrieval_by_k.items()},
+            "recall_at_k": {k: m.recall_at_k for k, m in retrieval_by_k.items()},
+            "precision_at_k": {k: m.precision_at_k for k, m in retrieval_by_k.items()},
+            "ndcg_at_k": {k: m.ndcg_at_k for k, m in retrieval_by_k.items()},
+            "r_precision": deepest.r_precision,
+            "n_queries": deepest.n_queries,
+            "per_query_depth_k": depth,
+            "per_query": _to_serialisable(deepest.per_query),
+        },
+        "generation": _to_serialisable(generation_metrics) if generation_metrics else None,
+        "config": {
+            "embedding_model": embedding_model,
+            "generation_model": generation_model,
+            "n_router": router_metrics.n_queries,
+            "n_structured": structured_metrics.n_queries,
+            "n_retrieval": deepest.n_queries,
+            "n_generation": generation_metrics.n_queries if generation_metrics else 0,
+            "k_values": list(k_values),
+        },
+    }
+
+
+def save_results(payload: dict[str, Any], path: str | Path) -> Path:
+    """Write the results payload to ``path`` as indented JSON. Returns the path."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, default=str)
+    return path
