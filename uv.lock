@@ -3667,6 +3667,7 @@ source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "folium" },
+    { name = "ipykernel" },
     { name = "numpy" },
     { name = "onnxruntime" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
@@ -3702,6 +3703,7 @@ dev = [
 requires-dist = [
     { name = "chromadb", specifier = ">=0.5" },
     { name = "folium", specifier = ">=0.16,<0.21" },
+    { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "numpy", specifier = ">=1.26,<2" },
     { name = "onnxruntime", specifier = "<1.20" },
     { name = "pandas", specifier = ">=2.2" },
