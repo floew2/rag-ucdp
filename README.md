@@ -27,10 +27,10 @@ Key features:
 |------------------|----------------------------------|------------------------|
 | Router | accuracy 0.840 · macro-F1 0.852 | n=50 |
 | Structured | 54/54 exact-match | n=54 |
-| Retrieval (hybrid) | [HR\@10](mailto:HR@10){.email} 0.867 · [MRR\@10](mailto:MRR@10){.email} 0.638 · [set-Recall\@10](mailto:set-Recall@10){.email} 0.659 · [set-Recall\@25](mailto:set-Recall@25){.email} 0.802 | n=30 |
+| Retrieval (hybrid) | `HR@10` 0.867 · `MRR@10` 0.638 · `set-Recall@10` 0.659 · `set-Recall@25` 0.802 | n=30 |
 | Generation | mean SAS 0.743 · citation faithfulness 1.00 | n=20 |
 
-*Note: v010 is the current baseline. See [Evaluation](#evaluation) and the v009/v010 entries in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).*
+*Note: the headline metrics above are the **validated v010 baseline**. Later runs (v011 prompt-depth, v012 method-independent gold, v013 prompt-fix, v014–v017 expansion + reranking) are documented as additive experiments under [Evaluation](#evaluation), not folded into the headline pending NGO κ-validation of the new gold. **Settled retrieval architecture:** multi-query expansion with a Mistral-7B variant generator (**mq-Mistral, no reranker**) is a modest, real improvement over the baseline retriever (v016: set-Recall@10 0.493 vs 0.458, R-Precision 0.467→0.506) and is the recommended expansion config. **Cross-encoder reranking is rejected** — three cross-encoders (MiniLM-L-6, BGE, BGE-reranker-large) all hurt this recall-first, short-record task; it is task-fit, not model-size (v015/v017). Recovery of baseline-unreachable events is a documented structural ceiling that expansion and reranking do not move. The architecture description below is the v010 baseline retriever. See [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).*
 
 ### Stack
 
@@ -144,7 +144,7 @@ Flags for stemming, stopword removal, and canonicalization remain in `bm25_index
 
 ### Router (strict priority — first match wins)
 
-```         
+```
 1. REFUSAL keywords present              → Path D (Refusal)
 2. AGGREGATION keywords present
      2a. AND semantic concept present    → Path C (Hybrid)
@@ -238,16 +238,29 @@ Each test set has **two tiers**: a curated set (representative use cases, i.e. q
 
 *SAS is a **generation-track** metric (n=20, separate test set), included here for convenience; it is non-deterministic (temperature \> 0), so cross-version deltas below \~0.02 are sampling noise, not knob effects. ᵃ v004's generation run was void (Ollama down → empty answers); not re-measured. ᵇ within ±0.02 of v003 — generation was unchanged in these retrieval experiments, so the move is context jitter, not signal. ᶜ generation not re-run for the reranker experiments (retrieval-only). The only clean, comparable SAS points are v003 (0.715) and v009 (0.742).*
 
-The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* harness. **v009 is different in kind:** it corrects the harness so evaluation exercises the production *filtered* path (the router's `where` filter was previously inactive in eval), then fixes the three filter bugs that correction exposed — country-from-actor over-reach (now locative-only), the Kyiv city/oblast split (now `$in [oblast, city]`), and the ChromaDB-invalid year-range shape — and moves BM25 from post- to pre-filtering. It is therefore a **new reference point, not a single-knob delta**: [HR\@10](mailto:HR@10){.email}/[set-Recall\@10](mailto:set-Recall@10){.email} are unchanged (most queries carry no filter), [MRR\@10](mailto:MRR@10){.email} improves (+0.018) where filters tighten the in-scope set. v009 established the filtered-path baseline; **v010** then re-evaluates that same configuration under the finalized harness (30/30 candidate pool, structured set expanded to 54) and is the current headline baseline — retrieval logic is unchanged from v009, so the small set-Recall / MRR shifts are the deeper-pool measurement, not a knob. v003–v008 remain valid relative to each other. Full account — including the *administrative-boundary* limitation it documents — is the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
+The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* harness. **v009 is different in kind:** it corrects the harness so evaluation exercises the production *filtered* path (the router's `where` filter was previously inactive in eval), then fixes the three filter bugs that correction exposed — country-from-actor over-reach (now locative-only), the Kyiv city/oblast split (now `$in [oblast, city]`), and the ChromaDB-invalid year-range shape — and moves BM25 from post- to pre-filtering. It is therefore a **new reference point, not a single-knob delta**: `HR@10`/`set-Recall@10` are unchanged (most queries carry no filter), `MRR@10` improves (+0.018) where filters tighten the in-scope set. v009 established the filtered-path baseline; **v010** then re-evaluates that same configuration under the finalized harness (30/30 candidate pool, structured set expanded to 54) and is the current headline baseline — retrieval logic is unchanged from v009, so the small set-Recall / MRR shifts are the deeper-pool measurement, not a knob. v003–v008 remain valid relative to each other. Full account — including the *administrative-boundary* limitation it documents — is the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
+
+### Additive experiments since baseline (v011–v013 — documented, not promoted)
+
+Three post-baseline runs extend the analysis without changing the promoted configuration: router, structured, and retrieval logic are identical to v010 in all three. Each is left *additive* pending the NGO validation step described at the end of this section.
+
+-   **v011 — prompt-depth ablation (generation only).** Retrieval is held fixed (retrieve once at top-15); only the number of events placed in the LLM prompt varies, with 3 repeats per depth to separate a real effect from temperature noise. SAS is effectively flat between a 5- and a 10-event prompt (0.730 vs 0.734, inside the ±0.005–0.007 run-to-run spread) and drops at 15 (0.717); faithfulness stays 1.000 throughout. **Verdict:** keep the prompt shallow (top-10) — more context does not help here and slightly hurts. This isolates a clean point: retrieving *deep* for recall metrics is fine, but the *prompt slice* should stay tight.
+
+-   **v012 — method-independent gold (retrieval + generation).** The circular-gold rebuild flagged under [Limitations](#limitations). Candidates were pooled across five diverse arms (BM25, dense, RRF, HyDE, multi-query) and blind-labeled to 362 relevant / 287 partial across 30 queries; the *same* production retriever was then re-scored against this harder gold — HR\@10 0.900 · MRR\@10 0.688 · set-Recall\@10 0.460 · Precision\@10 0.380 · nDCG\@10 0.604 · R-Precision 0.467. The headline finding is what the independent gold exposes: **set-Recall\@10 falls from the v010 figure of 0.659 to 0.460 — this is the circular-gold optimism being *measured*, not a regression.** The old gold was pooled from the system's own output, so a relevant event the retriever never surfaced could not enter it; the method-independent gold can, and the retriever recovers only ~46 % of graded-relevant events at k=10. That shortfall is precisely the recall headroom the query-expansion work targets. HR\@10 stays high (0.900) because most queries still surface *something* relevant near the top — the gap is completeness (recall), not top-hit presence.
+
+-   **v013 — prompt-fix (generation only).** A softened `SYSTEM_PROMPT` (explicit semantic-match hint; refuse *only* when nothing relevant is retrieved), with retrieval identical to v012, evaluated on the 30-query gold-triad set (distinct from the n=20 headline generation set). Mean SAS 0.740 → 0.775, faithfulness held at 1.000, refusals 3 → 1. The defensible signal is not the +0.035 mean (near single-run noise) but the mechanism: the *Bucha* query flips from an unwarranted refusal to a correct answer (SAS 0.45 → 0.89) while faithfulness stays perfect — the softer prompt recovered a real answer *without* beginning to invent, which is the exact failure mode a laxer refusal rule risks. The one remaining refusal (*hospitals*) is correct behaviour if UCDP carries no hospital-coded events. **Verdict:** adopt the v013 prompt; promotion to headline waits on the κ step so the generation and gold numbers move together.
+
+**Why "not promoted" yet.** v012's gold labels are a first pass by a single judge. Before these numbers replace the v010 headline, the labels need NGO validation — a second annotator plus a Cohen's κ inter-rater-agreement check — so the reported recall reflects an agreed relevance standard rather than one person's calls. Until then v010 stays the promoted baseline and v011–v013 stand as documented, reproducible extensions.
 
 ------------------------------------------------------------------------
 
 ## Limitations
 
--   **No LLM-based or semantic router, query expansion, or adopted reranker.** The rule-based router's B-as-A/D-as-A gaps and the tier-4 paraphrase failures remain; query expansion (with an explicit transparency cost) is the documented next lever. Cross-encoder reranking was tested and rejected.
+-   **Rule-based router; multi-query expansion (mq-Mistral) helps modestly, reranking rejected.** The rule-based router's B-as-A/D-as-A gaps and the tier-4 paraphrase failures remain (a semantic/LLM router is future work). Multi-query expansion with a Mistral-7B variant generator gives a modest, real full-gold gain (v016) and is the recommended expansion config; **cross-encoder reranking is dropped** — three models (MiniLM-L-6, BGE, BGE-reranker-large) all regressed this recall-first, short-record task (v015/v017), a task-fit rather than model-size problem. **Recovery of baseline-unreachable events is a documented structural ceiling:** expansion, three rerankers, and a stronger variant model all failed to move it (HyDE untried). See [Outlook](#outlook).
 -   **BM25 uses no stemming or stopword removal** — a deliberate baseline; the ablation (v004) showed it nets slightly negative here.
+-   **Path C (hybrid) aggregates over the top-50 retrieved without a relevance cut — counts are untrustworthy in both directions.** `execute_hybrid_path` retrieves a fixed `top_k = 50` and aggregates (count / sum / breakdown) over *all* of them. Retrieval ranks by semantic proximity; it does not decide relevance *membership*, so the aggregate over-counts when fewer than 50 events are truly relevant (marginal noise is swept in) and under-counts when more than 50 are (hard cap at 50). The ranked evidence list is still valuable as a **triage / evidence view**; the aggregate *number* should not be read as a true total. Fix in [Outlook](#outlook).
 -   **Modest test-set sizes** (n=20–50 per track). Adequate to surface failure modes; not for tight confidence intervals. Single-pass, no cross-validation.
--   **set-Recall is measured against a partially circular gold set.** The gold events were pooled from the retrieval system's own top-k output, so set-Recall is biased optimistic — a relevant event the retriever never surfaces cannot enter the gold. A method-independent rebuild is in progress: candidates pooled across five diverse retrieval arms (BM25, dense, RRF, HyDE, multi-query), blind-labeled, with NGO validation (Cohen's κ) pending — early results quantify the recall headroom the production retriever misses.
+-   **set-Recall was measured against a partially circular gold set — now quantified.** The original gold events were pooled from the retrieval system's own top-k output, so set-Recall was biased optimistic: a relevant event the retriever never surfaces could not enter the gold. A method-independent gold has since been **built** (v012) — candidates pooled across five diverse arms (BM25, dense, RRF, HyDE, multi-query), blind-labeled to 362 relevant / 287 partial across 30 queries. Re-scoring the *same* production retriever against it drops set-Recall\@10 from 0.659 to 0.460, putting a number on the optimism directly (see the v012 entry under [Evaluation](#evaluation)). NGO validation of the labels (a second annotator + Cohen's κ) is still **pending**, so v010 remains the promoted baseline.
 -   **Generation eval is path-A-isolated**, by design — it measures LLM quality given retrieved context, not end-to-end routing behavior.
 -   **Hard `adm_1` filters exclude across-boundary events.** A metadata filter scoped to one oblast drops genuinely relevant events coded *just across* an administrative line from the queried place — e.g. a ZNPP event coded to the Dnipropetrovsk/Nikopol bank (the Dnipro river is the oblast boundary), or the Krasnodar-side strike on the Kerch bridge. The filter is correct *per its predicate*; the predicate is narrower than user intent. Surfaced and documented in v009 (kept in the gold, not trimmed).
 -   **English-only embeddings.** BGE-large-en-v1.5; UCDP headlines are predominantly English but contain transliterated terms whose spelling variants (Odesa/Odessa, Kyiv/Kiev) affect retrieval.
@@ -256,9 +269,38 @@ The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* h
 
 ------------------------------------------------------------------------
 
+## Outlook / Roadmap {#outlook}
+
+Consolidated next steps for the NGO phase, grouped by leverage. The retrieval architecture is now **settled**: multi-query expansion with a Mistral-7B variant generator (mq-Mistral, no reranker) is the recommended config (v016); cross-encoder reranking is rejected across three models (v015/v017); and recovery of baseline-unreachable events is a documented structural ceiling. See [Evaluation](#evaluation) and the changelog. The items below are open.
+
+**Evaluation rigor — unblocks promotion.**
+-   **NGO κ-validation of the v012 gold** — second annotator + Cohen's κ; on acceptable agreement, v012 + v013 + v015 promote *together* to replace the v010 headline. The single gate in front of everything else.
+-   **Repeated measurements** — the v012–v015 numbers are single-run; 2–3 repeats (or a fixed temperature) to separate signal from the ~0.02 SAS / sampling noise.
+-   **Merge the n=20 generation set into the 30-query triad set** — retire the two-regime split (`generation.yaml` n=20 vs the n=30 gold triads) into one coherent generation gold, so SAS is comparable across all versions.
+-   **Stronger answer-similarity metric** — current SAS is BGE bi-encoder cosine (cheap, but a blunt proxy); a cross-encoder STS or LLM-as-judge would track answer quality better. Pair with **claim-level faithfulness** — the current metric checks citation *presence*, not whether each claim is supported, which is too weak for atrocity reporting.
+-   **Precision–recall curves + a unified eval dashboard** — one view across all paths, all k, and repeated runs, instead of per-version tables.
+
+**NGO-facing depth — the tool's differentiators (foundations already exist).**
+-   **Source-bias surfacing** — `source_bias.py` + the ~963-outlet taxonomy already classify outlets; extend to per-event **source counts and single-source flags**, **outlet-concentration / one-sidedness** (is an event reported only by one side's media?), and **reporting-gap detection** (regions/periods systematically under-reported).
+-   **Uncertainty surfacing** — the casualty range (`low`/`best`/`high`) and `deaths_civilians` are already ingested; surface the *range* in answers instead of a point figure, and add `geo_precision` / `date_prec` (confirm parquet coverage) so province-centroid events aren't drawn as exact points. Consider ingesting `deaths_a`/`deaths_b`/`deaths_unknown` for a civilian-vs-combatant split.
+-   **Geospatial** — `maps.py` (Folium) exists; extend to precision-aware markers, temporal animation, density/heatmaps, and linking the map to retrieval results; self-hosted tiles for offline use.
+
+**Retrieval / generation.**
+-   **Path C relevance selection — fix the untrustworthy hybrid counts** *(correctness, not an experiment).* Path C aggregates over the top-50 retrieved with no relevance boundary (see [Limitations](#limitations)). Insert a relevance-selection step *within* the retrieved pool before aggregating — an LLM / agent judging each candidate relevant-or-not, or a learned score threshold / dynamic cutoff — so the count reflects truly-relevant events rather than a fixed 50. Trade-offs: it makes Path C non-deterministic and adds an LLM step (a «kein Blackbox» cost — surface each event's keep/drop decision in the trace), and it needs its own eval (the structured 54/54 covers Path B, not Path C counts). For an NGO tool a *trustworthy* count matters more than a fast one, so this ranks high.
+-   **HyDE expansion arm** *(the one open retrieval lever)* — v016 settled the variant-model question: Mistral 7B fixes llama's factual drift and improves reachable-event recall, but does **not** recover baseline-unreachable events (held-out flat). HyDE — embedding an LLM-written hypothetical document — is the one untried arm that might reach them; evaluate it against the held-out subset, treating it as a recall test not an ordering one.
+-   **Domain-adapted reranker** *(low priority)* — off-the-shelf reranking is rejected across three cross-encoders (v015/v017): even BGE-reranker-large is worse on every axis, because rerankers score UCDP's terse records low (task-fit, not model-size). Any revival would need a reranker *fine-tuned on conflict-event records*, which is expensive and a long shot — deprioritised below HyDE and the NGO features.
+-   **Semantic / LLM router** — addresses the B-as-A / D-as-A misclassifications; keep the rule-based router as the auditable default.
+-   **Fuzzy string matching** in the router's place/actor extraction and `canonicalization.py` — tolerates spelling variants the regex/gazetteer misses, at a transparency cost (a similarity threshold is less auditable than a named rule).
+
+**Generalization & productionization.**
+-   **De-Ukraine-ify the hardcoded layers** — the regex router rules and the gazetteer/alias tables are Ukraine-specific; a second conflict (Sudan, Myanmar) is both the real NGO requirement and the honest test of how much is portable.
+-   **Docker** the pipeline for reproducible deployment, and a **UCDP data-update pipeline** (monthly Candidate releases) for a live tool instead of the current manual index rebuild.
+
+------------------------------------------------------------------------
+
 ## Repository structure
 
-```         
+```
 rag-ucdp/
 ├── README.md                       ← you are here (portfolio narrative)
 ├── PROJECT_SUMMARY_UCDP.md         ← deep technical reference
@@ -270,16 +312,28 @@ rag-ucdp/
 │   └── chroma_db/ · bm25/          ← gitignored, Colab-built
 ├── evals/
 │   ├── router · structured · retrieval · generation .yaml   ← two-tier test sets
-│   ├── results_v001.json … v011.json                        ← per-version outputs
+│   ├── results_v001.json … v017.json                          ← per-version outputs
 │   └── RESULTS_CHANGELOG.md                                  ← single-knob ablation log
 ├── notebooks/                      ← 01_data_exploration · 02_indexing · colab_indexing · 10_hand_labeling · 11_evaluation · 12_pooling
 ├── notes/anchor-token-finding.md   ← deep dive on the paraphrase failure
 ├── src/rag_ucdp/                   ← data_loading · preprocessing · embeddings · vector_store ·
 │                                     bm25_index · retrieval · router · structured_query · hybrid_path ·
-│                                     source_bias · maps · canonicalization · reranking · generation · evaluation
+│                                     source_bias · maps · canonicalization · reranking · query_expansion · generation · evaluation
 ├── app/streamlit_app.py
 └── tests/                          ← 214 tests, <15 s
 ```
+
+### Notebook workflow (order of work)
+
+The pipeline logic lives in `src/rag_ucdp/`; the notebooks are the workbench that built and validated it, run in this order:
+
+1.  **`01_data_exploration.ipynb`** — understand UCDP GED and scope it to the Ukraine 2022–2024 subset. Most downstream design choices (which fields to index, how `build_document_text` phrases each event, the router's categories and filter granularity) trace back to what this notebook surfaced about the data.
+2.  **`02_indexing.ipynb`** (the heavy embedding step offloaded to **`colab_indexing.ipynb`** on a T4 GPU) — build the retrieval indexes: BGE-large embeddings into ChromaDB (HNSW) plus the BM25 keyword index over the same documents.
+3.  **`10_hand_labeling.ipynb`** — hand-label the evaluation gold (relevant events per query, gold answers): the manual work behind the eval's credibility.
+4.  **`11_evaluation.ipynb`** — the main workbench: run the four eval tracks (router / structured / retrieval / generation) and every versioned experiment logged in [`RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md) (the v-series).
+5.  **`12_pooling.ipynb`** — build the method-independent gold (v012): pool candidates across five retrieval arms and blind-label them, to correct the circular-gold optimism.
+
+The numbering gap (03–09) mirrors the original project phases; those steps hardened into `src/rag_ucdp/` modules rather than standing notebooks.
 
 ------------------------------------------------------------------------
 
