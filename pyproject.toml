@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Hybrid RAG + structured-query system over UCDP conflict event data, with geospatial visualization and source-bias surfacing."
 readme = "README.md"
 authors = [
-    { name = "Fabian Löw", email = "102547841+floew2@users.noreply.github.com" }
+    { name = "Fabian Löw" }
 ]
 license = { text = "MIT" }
 keywords = ["rag", "retrieval-augmented-generation", "ucdp", "conflict-data", "nlp"]
