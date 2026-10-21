@@ -12,7 +12,7 @@ Question answering over conflict-event data: a routed hybrid RAG system on the [
 
 UCDP records every event with structured fields (date, place, parties, fatalities) and a short free-text news headline. The structured fields answer *"how many fatalities in Donetsk in 2023?"*; only the text can answer *"attacks on schools"* or *"strikes on power infrastructure"*. This project serves both kinds of question from one interface and uses the LLM only where it adds value.
 
-- **Query routing.** A rule-based router sends each query down one of four paths: semantic search with an LLM answer, exact pandas aggregation without any LLM, a hybrid of both, or a templated refusal for causal and opinion questions.
+- **Query routing.** A rule-based router sends each query down one of four paths: semantic search with an LLM answer, exact pandas aggregation without any LLM, a hybrid of both (currently switched off, see Limitations), or a templated refusal for causal and opinion questions.
 - **Hybrid retrieval.** Dense (BGE) and keyword (BM25) search, fused with Reciprocal Rank Fusion. Place and year filters extracted from the question pre-filter both legs.
 - **Cited answers.** The local LLM answers only from retrieved events and cites them as `[event-ID]`.
 - **Source-bias surfacing.** Each result set shows which kinds of outlets reported it (e.g. Russian state media, Ukrainian casualty trackers, OSINT volunteers), with a Simpson diversity index and a single-source dominance flag.
@@ -56,7 +56,7 @@ flowchart TD
     R -->|"causal / opinion"| D["D · Refusal<br/>templated, no LLM"]
     R -->|semantic| A["A · Semantic<br/>hybrid retrieval → LLM answer with citations"]
     R -->|quantitative| B["B · Structured<br/>pandas aggregation, no LLM"]
-    R -->|mixed| C["C · Hybrid<br/>retrieval + aggregation, no LLM"]
+    R -->|mixed| C["C · Hybrid<br/>retrieval + aggregation<br/>(switched off; answered as A)"]
 
     subgraph IDX["Indexes, built once from the parquet"]
         CH[("ChromaDB<br/>BGE-large vectors")]
@@ -175,7 +175,7 @@ rag-ucdp/
 ## Limitations
 
 - **Keyword router.** Questions that imply aggregation or opinion without the usual keywords are routed to the semantic path (5 of 15 aggregation and 3 of 12 refusal test queries).
-- **Path C counts are not totals.** The hybrid path aggregates over the top 50 retrieved events without a relevance cut-off, so its numbers can over- or under-count. Its event list is still useful as evidence.
+- **Path C is switched off.** It counted over a fixed number of retrieved events (50) with no relevance cut-off, so its totals were not reliable. Questions routed there (e.g. *"how many attacks on energy infrastructure in 2023?"*) now get the relevant events and a cited answer, without a count. It can be re-enabled with `router.hybrid_path: true` in `config.yaml`.
 - **Administrative filters are strict.** A filter on one oblast drops relevant events coded just across the boundary (e.g. the opposite bank of the Dnipro).
 - **Source taxonomy is hand-curated.** 63 classified outlets cover 94 % of the 37,854 source mentions in the corpus; the remaining outlets count as *other / unknown*.
 - **Scope.** English embeddings, Ukraine only, small test sets (20–54 queries per component), online map tiles.
@@ -184,7 +184,7 @@ rag-ucdp/
 
 - **Agentic routing.** Replace the keyword router with an LLM agent that chooses the path and tools, keeping the rule-based router as an auditable fallback.
 - **Multi-query expansion in the app.** It improves every retrieval metric but is not yet wired into the app.
-- **Trustworthy path C counts.** Add a relevance step so the hybrid path aggregates only relevant events.
+- **Re-enable path C.** Add a relevance step that decides which retrieved events actually match, plus a test set with known counts, before reporting totals again.
 - **Uncertainty in answers.** Report casualty ranges (low / best / high) instead of point figures.
 - **Evaluation.** Measure generation with Mistral 7B as the answer model, with repeated runs and a second annotator for the relevance labels.
 - **Deployment and scope.** Package the app with Docker and extend to a second conflict.
