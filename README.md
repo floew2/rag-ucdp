@@ -1,6 +1,6 @@
 # rag-ucdp
 
-Question answering over conflict-event data: a routed hybrid RAG system on the [UCDP Georeferenced Event Dataset](https://ucdp.uu.se/), with exact aggregation for numeric questions, source-bias surfacing and map views. Scoped to Ukraine 2022–2024 (28,531 events) and designed for human-rights / NGO use.
+Question answering over conflict-event data: a routed hybrid RAG system on the [UCDP Georeferenced Event Dataset](https://ucdp.uu.se/), with exact aggregation for numeric questions, source-bias surfacing and map views. Scoped to Ukraine 2022–2024 (28,531 events).
 
 [![CI](https://github.com/floew2/rag-ucdp/actions/workflows/ci.yml/badge.svg)](https://github.com/floew2/rag-ucdp/actions/workflows/ci.yml) [![python](https://img.shields.io/badge/python-3.12-blue)](#quick-start) [![code license](https://img.shields.io/badge/code-MIT-green)](#license) [![data license](https://img.shields.io/badge/data-CC--BY--4.0-lightgrey)](#data-and-citation)
 
@@ -12,15 +12,15 @@ Question answering over conflict-event data: a routed hybrid RAG system on the [
 
 UCDP records every event with structured fields (date, place, parties, fatalities) and a short free-text news headline. The structured fields answer *"how many fatalities in Donetsk in 2023?"*; only the text can answer *"attacks on schools"* or *"strikes on power infrastructure"*. This project serves both kinds of question from one interface and uses the LLM only where it adds value.
 
-- **Query routing.** A transparent rule-based router sends each question down one of four paths: semantic search with an LLM answer, exact pandas aggregation without any LLM, a hybrid of both, or a templated refusal for causal and opinion questions.
+- **Query routing.** A rule-based router sends each query down one of four paths: semantic search with an LLM answer, exact pandas aggregation without any LLM, a hybrid of both, or a templated refusal for causal and opinion questions.
 - **Hybrid retrieval.** Dense (BGE) and keyword (BM25) search, fused with Reciprocal Rank Fusion. Place and year filters extracted from the question pre-filter both legs.
 - **Cited answers.** The local LLM answers only from retrieved events and cites them as `[event-ID]`.
 - **Source-bias surfacing.** Each result set shows which kinds of outlets reported it (e.g. Russian state media, Ukrainian casualty trackers, OSINT volunteers), with a Simpson diversity index and a single-source dominance flag.
-- **Maps.** Retrieved events are drawn on an interactive Folium map.
+- **Maps.** Retrieved UCDP events are drawn on an interactive Folium map.
 
 ## Results
 
-Each component is evaluated with the metric that fits it, on hand-labelled test sets.
+Each component is evaluated on hand-labelled test sets.
 
 | Component | Metric | Result | n |
 |---|---|---|---|
@@ -41,14 +41,14 @@ Retrieval is scored against a pooled relevance set: candidates from five differe
 | + multi-query + cross-encoder (bge-reranker-large) | 0.83 | 0.57 | 0.51 | 0.42 | 0.44 |
 
 - **Multi-query expansion helps modestly** on every metric. It is implemented in `query_expansion.py`; the app does not use it yet.
-- **Cross-encoder reranking hurts** on this data, and the larger reranker hurts more. UCDP records are short and formulaic, which off-the-shelf rerankers score poorly. Reranking was therefore left out.
+- **Cross-encoder reranking hurts** on this data, and the larger reranker hurts more. UCDP records are short and formulaic, which off-the-shelf rerankers score poorly. Reranking was therefore left out for the moment.
 - **Recall is the open problem.** At k=10 the default retriever finds about half of all relevant events. Questions phrased without the words the records use (e.g. *"civilians sheltering"* instead of the building's name) are the main failure mode.
 
 The test sets and labels are kept private; the evaluation code is in [`src/rag_ucdp/evaluation.py`](src/rag_ucdp/evaluation.py).
 
 ## How it works
 
-The router classifies each question and extracts place and year filters; the same filter drives ChromaDB, BM25 and pandas.
+The router classifies each question (query) and extracts place and year filters; the same filter drives ChromaDB, BM25 and pandas.
 
 ```mermaid
 flowchart TD
