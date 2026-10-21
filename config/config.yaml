@@ -25,5 +25,5 @@ router:
   bias_warning_threshold: 0.7
 
 generation:
-  temperature: 0.3
+  temperature: 0.2
   max_tokens: 512

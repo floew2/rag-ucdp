@@ -12,7 +12,7 @@ This is the user-facing demo that ties everything together:
 - Hybrid path C (retrieve subset + aggregate)
 - Source bias surfacing (Simpson's diversity, dominance flag)
 - Geospatial visualization (folium map)
-- Local LLM (llama3.2:3b) via Ollama
+- Local LLM (default ``mistral:7b``, set in ``config/config.yaml``) via Ollama
 
 Resources are loaded once via Streamlit's :func:`st.cache_resource` and
 reused across queries. The embedder is warmed up at startup so the first
@@ -22,6 +22,7 @@ query is no slower than subsequent ones.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +31,10 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 from rag_ucdp.bm25_index import BM25Index
+from rag_ucdp.config import load_config
 from rag_ucdp.data_loading import load_processed
 from rag_ucdp.embeddings import EmbeddingModel
-from rag_ucdp.generation import DEFAULT_MODEL, MistralGenerator, build_refusal
+from rag_ucdp.generation import MistralGenerator, build_refusal
 from rag_ucdp.hybrid_path import execute_hybrid_path
 from rag_ucdp.maps import make_event_map, retrieval_results_to_dataframe
 from rag_ucdp.retrieval import RetrievalResult, hybrid_retrieve
@@ -48,6 +50,7 @@ from rag_ucdp.vector_store import VectorStore
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
+CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 PROCESSED_PARQUET = PROJECT_ROOT / "data" / "processed" / "events_ukraine.parquet"
 CHROMA_DIR = PROJECT_ROOT / "data" / "chroma_db"
 BM25_PATH = PROJECT_ROOT / "data" / "bm25" / "index.pkl"
@@ -127,7 +130,14 @@ def load_resources() -> dict[str, Any]:
     # Warm up so the first user query isn't penalized by model loading.
     embedder.embed(["warmup"])
     lookup = SourceAffiliationLookup.from_yaml(AFFILIATIONS_YAML)
-    generator = MistralGenerator()
+    cfg = load_config(CONFIG_PATH)
+    # OLLAMA_BASE_URL overrides the config, e.g. when the app runs in Docker
+    # and Ollama runs natively on the host.
+    generator = MistralGenerator(
+        base_url=os.environ.get("OLLAMA_BASE_URL", cfg.models.ollama_base_url),
+        model=cfg.models.llm_model,
+        temperature=cfg.generation.temperature,
+    )
     return {
         "df": df,
         "vector_store": vector_store,
@@ -413,7 +423,8 @@ def main() -> None:
     st.markdown(
         "Hybrid retrieval over UCDP GED conflict events. "
         "Quantitative queries go to deterministic aggregation; semantic "
-        f"queries go to a local LLM ({DEFAULT_MODEL}) over hybrid retrieval. "
+        f"queries go to a local LLM ({load_config(CONFIG_PATH).models.llm_model}) "
+        "over hybrid retrieval. "
         "Source bias is surfaced explicitly."
     )
 
@@ -423,8 +434,7 @@ def main() -> None:
             f"- `{PROCESSED_PARQUET.relative_to(PROJECT_ROOT)}`\n"
             f"- `{CHROMA_DIR.relative_to(PROJECT_ROOT)}/`\n"
             f"- `{BM25_PATH.relative_to(PROJECT_ROOT)}`\n\n"
-            "Run `notebooks/02_indexing.ipynb` (or the Colab GPU notebook) to "
-            "build the indexes."
+            "Run `notebooks/02_indexing.ipynb` to build the indexes."
         )
         return
 
