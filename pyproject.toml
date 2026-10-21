@@ -31,6 +31,9 @@ dependencies = [
     "ipykernel>=7.2.0",
 ]
 
+[project.scripts]
+rag-ucdp = "rag_ucdp.cli:main"
+
 [dependency-groups]
 dev = [
     "ruff>=0.6",
