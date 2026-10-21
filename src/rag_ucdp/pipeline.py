@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -43,6 +43,12 @@ from rag_ucdp.structured_query import (
 from rag_ucdp.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+#: Shown when a path-C question is answered on the semantic path instead.
+HYBRID_OFF_NOTE = (
+    "Counting events by topic is not supported yet, so no total is given. "
+    "These are the most relevant events."
+)
 
 #: Short labels for the four router paths.
 PATH_LABELS: dict[RouterPath, str] = {
@@ -276,7 +282,12 @@ def answer(query: str, res: Resources) -> Answer:
     if decision.path is RouterPath.STRUCTURED:
         return _structured(query, decision, res)
     if decision.path is RouterPath.HYBRID:
-        return _hybrid(query, decision, res)
+        if res.cfg.router.hybrid_path:
+            return _hybrid(query, decision, res)
+        # Path C is switched off: answer on the semantic path, with a note.
+        result = _semantic(query, replace(decision, path=RouterPath.SEMANTIC), res)
+        result.notes.insert(0, HYBRID_OFF_NOTE)
+        return result
     refusal = build_refusal(query)
     return Answer(query=query, decision=decision, text=refusal.answer, generation=refusal)
 

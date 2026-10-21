@@ -68,6 +68,10 @@ class RouterConfig(BaseModel):
 
     mode: str = Field(pattern="^(rules|llm)$")
     bias_warning_threshold: float = Field(ge=0.0, le=1.0)
+    #: Path C counts over a fixed number of retrieved events, so its numbers
+    #: are not reliable totals. While off, path-C questions get a semantic
+    #: answer with the relevant events instead.
+    hybrid_path: bool = False
 
 
 class GenerationConfig(BaseModel):

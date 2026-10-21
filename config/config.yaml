@@ -30,6 +30,7 @@ models:
 router:
   mode: "rules"
   bias_warning_threshold: 0.7
+  hybrid_path: false     # path C (count over retrieved events) is off until it has a relevance step
 
 generation:
   temperature: 0.2

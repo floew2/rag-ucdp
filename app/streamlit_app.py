@@ -213,6 +213,8 @@ def render_breakdown_chart(breakdown: pd.DataFrame) -> None:
 def render_semantic(result: Answer) -> None:
     """Path A: cited LLM answer over hybrid retrieval."""
     st.subheader("Answer")
+    for note in result.notes:
+        st.info(note)
     if result.error:
         st.error(result.text)
     else:

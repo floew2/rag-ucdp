@@ -16,7 +16,7 @@ from rag_ucdp.bm25_index import BM25Index
 from rag_ucdp.config import AppConfig, resolve_path
 from rag_ucdp.generation import GenerationResult
 from rag_ucdp.indexing import build_indexes
-from rag_ucdp.pipeline import Resources, answer, check_status
+from rag_ucdp.pipeline import HYBRID_OFF_NOTE, Resources, answer, check_status
 from rag_ucdp.router import RouterPath
 from rag_ucdp.source_bias import SourceAffiliationLookup
 from rag_ucdp.vector_store import VectorStore
@@ -84,7 +84,17 @@ def test_structured_question_matches_pandas(resources: Resources, sample_df) -> 
     assert resources.generator.calls == []  # type: ignore[attr-defined]
 
 
-def test_hybrid_question_aggregates_retrieved_events(resources: Resources) -> None:
+def test_hybrid_path_is_off_by_default(resources: Resources) -> None:
+    result = answer("How many attacks on energy infrastructure in 2023?", resources)
+
+    assert result.path is RouterPath.SEMANTIC
+    assert result.notes[0] == HYBRID_OFF_NOTE
+    assert result.structured is None  # no count is reported
+    assert result.events and result.cited_ids
+
+
+def test_hybrid_question_aggregates_when_enabled(resources: Resources) -> None:
+    resources.cfg.router.hybrid_path = True
     result = answer("How many attacks on energy infrastructure in 2023?", resources)
 
     assert result.path is RouterPath.HYBRID
