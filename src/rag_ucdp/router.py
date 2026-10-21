@@ -22,8 +22,8 @@ filters are always extracted and attached, since paths A, B, and C all use
 them.
 
 The keyword lists are illustrative defaults intended to give reasonable
-behavior on representative queries. They are tuned during the router
-evaluation phase (Phase 11) against a hand-labeled test set.
+behavior on representative queries. They were tuned against a
+hand-labeled router test set.
 """
 
 from __future__ import annotations

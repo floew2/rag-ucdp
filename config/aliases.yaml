@@ -1,4 +1,4 @@
-# Transliteration / spelling alias map (v006).
+# Transliteration / spelling alias map.
 #
 # Folds spelling variants of the same place to one canonical token, applied
 # symmetrically at BM25 index + query time and shared by the router. This is

@@ -1,4 +1,4 @@
-"""Tests for the cross-encoder reranker (v007).
+"""Tests for the cross-encoder reranker.
 
 Uses a deterministic fake cross-encoder injected via ``model=``, so no model
 download or sentence-transformers runtime is needed.

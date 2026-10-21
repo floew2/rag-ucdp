@@ -726,7 +726,7 @@ def run_generation_track(
 
     ``prompt_top_k`` is how many retrieved events are placed in the LLM prompt;
     ``retrieval_depth`` is how many are retrieved (defaults to ``prompt_top_k``).
-    For the prompt-depth ablation (v011), fix ``retrieval_depth`` at the deepest
+    For a prompt-depth ablation, fix ``retrieval_depth`` at the deepest
     level and vary ``prompt_top_k`` so retrieval is held constant and only the
     prompt slice changes. Citation faithfulness is scored against the prompt
     slice (the events the model could actually see), not the full retrieved set.

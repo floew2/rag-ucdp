@@ -103,7 +103,7 @@ def test_load_missing_file_raises(tmp_path: Path) -> None:
         BM25Index.load(tmp_path / "does_not_exist.pkl")
 
 
-# --- Stemming + stopword removal (v004 BM25 preprocessing) -------------------
+# --- Stemming + stopword removal (optional BM25 preprocessing) ------------------
 
 
 def test_tokenize_stemming_merges_inflections() -> None:
@@ -184,7 +184,7 @@ def test_load_legacy_pickle_defaults_flags_off(tmp_path: Path) -> None:
     assert idx.remove_stopwords is False
 
 
-# --- Alias canonicalization (v006) ------------------------------------------
+# --- Alias canonicalization -----------------------------------------------
 
 
 def test_tokenize_canonicalizes_variants() -> None:
@@ -238,7 +238,7 @@ def test_save_load_preserves_canonicalize_flag(
     assert idx2.stem is False and idx2.remove_stopwords is False
 
 
-# --- v009 BM25 metadata pre-filtering (allowed_ids mask before top-k) ---
+# --- BM25 metadata pre-filtering (allowed_ids mask before top-k) ---
 
 
 def _toy_index() -> "BM25Index":

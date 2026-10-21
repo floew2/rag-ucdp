@@ -144,7 +144,7 @@ def test_kursk_canonicalizes_with_oblast_suffix() -> None:
 
     Regression: an earlier version mapped 'kursk' -> 'Kursk', causing
     pandas filters to return 0 events even though 514 Kursk events exist
-    in the corpus. Found by structured-query eval (Phase 11).
+    in the corpus. Found by the structured-query evaluation.
     """
     decision = classify("How many events in Kursk?")
     assert decision.filters == {"adm_1": "Kursk oblast"}
@@ -156,7 +156,7 @@ def test_belgorod_canonicalizes_with_oblast_suffix() -> None:
     assert decision.filters == {"adm_1": "Belgorod oblast"}
 
 
-# --- v009 filter-extraction regressions (country-from-actor, city/oblast split) ---
+# --- Filter-extraction regressions (country-from-actor, city/oblast split) ---
 
 
 def test_country_not_extracted_from_adjective() -> None:
@@ -209,7 +209,7 @@ def test_crimea_covers_peninsula() -> None:
     }
 
 
-# --- v009 year-range must be ChromaDB-valid (single operator per expression) ---
+# --- Year-range must be ChromaDB-valid (single operator per expression) ---
 
 
 def _assert_single_operator(where: dict) -> None:
@@ -227,7 +227,7 @@ def test_year_range_is_chromadb_valid() -> None:
 
     Regression: ChromaDB rejects {"year": {"$gte": lo, "$lte": hi}} ("operator
     expression must have exactly one operator"). This only surfaced once filters
-    were wired into the eval (v009).
+    were wired into the evaluation.
     """
     decision = classify("Strikes on energy infrastructure in winter 2022-2023")
     assert decision.filters == {"$and": [{"year": {"$gte": 2022}}, {"year": {"$lte": 2023}}]}
