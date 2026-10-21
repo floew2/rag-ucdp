@@ -1,361 +1,171 @@
 # rag-ucdp
 
-> Routed RAG (Hybrid: BM25 - Semantic - RRF), with a query router at the front of the pipeline. Implemented over the UCDP Georeferenced Event Dataset, with rule-based query routing, source-bias surfacing, and geospatial visualization of retrieved events. Scoped to the Ukraine conflict (2022+, \~28,531 events) and designed for a human-rights NGO context.
+Question answering over conflict-event data: a routed hybrid RAG system on the [UCDP Georeferenced Event Dataset](https://ucdp.uu.se/), with exact aggregation for numeric questions, source-bias surfacing and map views. Scoped to Ukraine 2022–2024 (28,531 events) and designed for human-rights / NGO use.
 
-[![tests](https://img.shields.io/badge/tests-214%20passing-brightgreen)](#tests) [![python](https://img.shields.io/badge/python-3.12-blue)](#prerequisites) [![license](https://img.shields.io/badge/code-MIT-green)](#license) [![data](https://img.shields.io/badge/data-CC--BY--4.0-lightgrey)](#data-and-citations)
+[![CI](https://github.com/floew2/rag-ucdp/actions/workflows/ci.yml/badge.svg)](https://github.com/floew2/rag-ucdp/actions/workflows/ci.yml) [![python](https://img.shields.io/badge/python-3.12-blue)](#quick-start) [![code license](https://img.shields.io/badge/code-MIT-green)](#license) [![data license](https://img.shields.io/badge/data-CC--BY--4.0-lightgrey)](#data-and-citation)
 
-------------------------------------------------------------------------
+![Streamlit app: router decision, cited answer, event map and source-bias panel](docs/img/streamlit-gui.png)
 
-![Streamlit GUI](docs/img/streamlit-gui.png)
+**Built with:** BGE-large-en-v1.5 · ChromaDB · BM25 (`rank_bm25`) · Reciprocal Rank Fusion · Ollama (Mistral 7B, local) · pandas · Streamlit · Folium · Python 3.12 · uv · ruff · mypy · pytest
 
 ## What it does
 
-The UCDP Georeferenced Event Dataset is primarily **structured**: every conflict event carries date, coordinates, conflict parties, fatality counts, and categorical fields, all queryable by filter-and-aggregate. What that access pattern *cannot* reach is the **unstructured** `source_headline` field — the news-article text describing named buildings, weapon types, and circumstances that no structured column records.
+UCDP records every event with structured fields (date, place, parties, fatalities) and a short free-text news headline. The structured fields answer *"how many fatalities in Donetsk in 2023?"*; only the text can answer *"attacks on schools"* or *"strikes on power infrastructure"*. This project serves both kinds of question from one interface and uses the LLM only where it adds value.
 
-This project makes that text **semantically searchable**, so an analyst of the NGO can ask *"attacks on schools,"* *"missile strikes on power infrastructure,"* or *"events near religious sites"* and recover relevant events the columns alone could never surface — while still answering numeric questions (*"how many fatalities in Donetsk in 2023?"*) by **exact aggregation**, not LLM guessing. A four-path router decides which question is which, so the LLM is used **only where LLMs are actually strong**.
+- **Query routing.** A transparent rule-based router sends each question down one of four paths: semantic search with an LLM answer, exact pandas aggregation without any LLM, a hybrid of both, or a templated refusal for causal and opinion questions.
+- **Hybrid retrieval.** Dense (BGE) and keyword (BM25) search, fused with Reciprocal Rank Fusion. Place and year filters extracted from the question pre-filter both legs.
+- **Cited answers.** The local LLM answers only from retrieved events and cites them as `[event-ID]`.
+- **Source-bias surfacing.** Each result set shows which kinds of outlets reported it (e.g. Russian state media, Ukrainian casualty trackers, OSINT volunteers), with a Simpson diversity index and a single-source dominance flag.
+- **Maps.** Retrieved events are drawn on an interactive Folium map.
 
-Key features:
+## Results
 
-1.  **Query routing** — a four-path rule-based router: semantic → hybrid retrieval + LLM; quantitative → pandas aggregation (no LLM); mixed → hybrid; causal/opinion/moral → templated refusal.
-2.  **Source-bias surfacing** (an NGO requirement) — every result set shows per-affiliation counts, a Simpson diversity index, and a single-affiliation dominance flag. Bias is exposed for the reader, not hidden behind an LLM summary.
-3.  **Geospatial visualization** (an NGO requirement) — Folium maps overlay retrieved events on Ukrainian territory, making spatial context and cross-border events (Kursk, Belgorod, Poland) visible at a glance.
+Each component is evaluated with the metric that fits it, on hand-labelled test sets.
 
+| Component | Metric | Result | n |
+|---|---|---|---|
+| Router | accuracy · macro-F1 | 0.84 · 0.85 | 50 queries |
+| Structured aggregation | exact match | 54 / 54 | 54 queries |
+| Retrieval (default hybrid) | HR@10 · MRR@10 · nDCG@10 | 0.90 · 0.69 · 0.60 | 30 queries |
+| Answer generation | semantic answer similarity · citation faithfulness | 0.74 · 1.00 | 20 queries |
 
-### Headline metrics (baseline, v010)
+Retrieval is scored against a pooled relevance set: candidates from five different retrieval methods (BM25, dense, RRF, HyDE, multi-query) were labelled with graded relevance, so the labels do not depend on the default system's own ranking. Labels are by the author, LLM-assisted. Generation was measured with `llama3.2:3b` as the answer model.
 
-| Track | Metric | Test set |
-|------------------|----------------------------------|------------------------|
-| Router | accuracy 0.840 · macro-F1 0.852 | n=50 |
-| Structured | 54/54 exact-match | n=54 |
-| Retrieval (hybrid) | `HR@10` 0.867 · `MRR@10` 0.638 · `set-Recall@10` 0.659 · `set-Recall@25` 0.802 | n=30 |
-| Generation | mean SAS 0.743 · citation faithfulness 1.00 | n=20 |
+**Which retrieval upgrades pay off** (same 30 queries and labels, top 10):
 
-*Note: the headline metrics above are the **validated v010 baseline**. Later runs (v011 prompt-depth, v012 method-independent gold, v013 prompt-fix, v014–v017 expansion + reranking) are documented as additive experiments under [Evaluation](#evaluation), not folded into the headline pending NGO κ-validation of the new gold. **Settled retrieval architecture:** multi-query expansion with a Mistral-7B variant generator (**mq-Mistral, no reranker**) is a modest, real improvement over the baseline retriever (v016: set-Recall@10 0.493 vs 0.458, R-Precision 0.467→0.506) and is the recommended expansion config. **Cross-encoder reranking is rejected** — three cross-encoders (MiniLM-L-6, BGE, BGE-reranker-large) all hurt this recall-first, short-record task; it is task-fit, not model-size (v015/v017). Recovery of baseline-unreachable events is a documented structural ceiling that expansion and reranking do not move. The architecture description below is the v010 baseline retriever. See [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).*
+| Configuration | HR | MRR | nDCG | Recall | R-Precision |
+|---|---|---|---|---|---|
+| Hybrid BM25 + dense, RRF (default) | 0.90 | 0.69 | 0.60 | 0.46 | 0.47 |
+| + multi-query expansion (Mistral 7B variants) | **0.93** | **0.73** | **0.64** | **0.49** | 0.51 |
+| + multi-query + cross-encoder (MiniLM-L-6) | 0.90 | 0.68 | 0.60 | 0.47 | **0.53** |
+| + multi-query + cross-encoder (bge-reranker-large) | 0.83 | 0.57 | 0.51 | 0.42 | 0.44 |
 
-### Stack
+- **Multi-query expansion helps modestly** on every metric. It is implemented in `query_expansion.py`; the app does not use it yet.
+- **Cross-encoder reranking hurts** on this data, and the larger reranker hurts more. UCDP records are short and formulaic, which off-the-shelf rerankers score poorly. Reranking was therefore left out.
+- **Recall is the open problem.** At k=10 the default retriever finds about half of all relevant events. Questions phrased without the words the records use (e.g. *"civilians sheltering"* instead of the building's name) are the main failure mode.
 
-BGE-large-en-v1.5 (1024-d, MTEB-top-ranked) · ChromaDB (PersistentClient, cosine) · `rank_bm25` (BM25Okapi) · Reciprocal Rank Fusion (k=60) · llama3.2:3b via Ollama (local, CPU-friendly) · pandas + pyarrow · Streamlit · Folium · Python 3.12 / uv / ruff / mypy / pytest.
+The test sets and labels are kept private; the evaluation code is in [`src/rag_ucdp/evaluation.py`](src/rag_ucdp/evaluation.py).
 
-------------------------------------------------------------------------
+## How it works
 
-## Architecture
+The router classifies each question and extracts place and year filters; the same filter drives ChromaDB, BM25 and pandas.
 
-### End-to-end flow
-
-``` mermaid
+```mermaid
 flowchart TD
-    subgraph OFFLINE["Offline indexing — one-time, Colab GPU"]
-        direction TB
-        CSV["GEDEvent_v25_1.csv"] --> SCOPE["scope filter (offline, one-time)<br/>side_a or side_b = Ukraine<br/>AND date_start in 2022-01-01 … 2024-12-31"]
-        SCOPE --> PARQUET[("events_ukraine.parquet<br/>~28,531 events")]
-        PARQUET --> DOC["build_document_text()<br/>concatenate UCDP fields into one text:<br/>date · location · parties · type ·<br/>fatalities · headline (trunc. 800)"]
-        PARQUET --> META["extract_metadata()<br/>id · year · oblast · lat/lng ·<br/>best · side_a/b · sources"]
-        DOC --> EMB["BGE-large embed<br/>raw text · 1024-d · L2-norm"]
-        DOC --> TOK["BM25 tokenize<br/>lowercase → regex split [a-z0-9]+<br/>(optional) stopword · stem · alias"]
-        EMB --> CHROMA[("ChromaDB<br/>vectors + metadata")]
-        META --> CHROMA
-        TOK --> BM25IDX[("bm25/index.pkl")]
+    Q(["User question"]) --> R{"Router<br/>path + place/year filter"}
+    R -->|"causal / opinion"| D["D · Refusal<br/>templated, no LLM"]
+    R -->|semantic| A["A · Semantic<br/>hybrid retrieval → LLM answer with citations"]
+    R -->|quantitative| B["B · Structured<br/>pandas aggregation, no LLM"]
+    R -->|mixed| C["C · Hybrid<br/>retrieval + aggregation → LLM"]
+
+    subgraph IDX["Indexes, built once from the parquet"]
+        CH[("ChromaDB<br/>BGE-large vectors")]
+        BM[("BM25 index")]
     end
+    P[("events_ukraine.parquet")]
 
-    CHROMA --> INDEXES["prebuilt indexes<br/>(ChromaDB + BM25)"]
-    BM25IDX --> INDEXES
+    IDX -.-> A
+    IDX -.-> C
+    P -.-> B
+    P -.-> C
 
-    Q(["User query"]) --> ROUTER{"Router (heuristic)<br/>1 · classify path (strict priority)<br/>2 · query parser → filter extraction"}
-    ROUTER -->|"causal / opinion / moral"| D["D · Refusal<br/>templated · NO LLM, NO retrieval"]
-    ROUTER -->|"path A / B / C"| WHERE[/"filter extraction (query parser)<br/>where: year · country · oblast<br/>(may be empty)"/]
-    WHERE -->|semantic| A["A · Semantic<br/>hybrid retrieval → llama3.2:3b"]
-    WHERE -->|quantitative| B["B · Structured<br/>pandas aggregation · NO LLM"]
-    WHERE -->|mixed| C["C · Hybrid<br/>retrieval + aggregation → llama3.2:3b"]
-
-    INDEXES -.->|retrieve, filtered| A
-    INDEXES -.->|retrieve, filtered| C
-    PARQUET -.->|aggregate, filtered| B
-    PARQUET -.->|aggregate, filtered| C
-
-    A --> UI["Streamlit UI<br/>router decision · answer · evidence panel ·<br/>source-bias panel · Folium map"]
+    A --> UI["Streamlit UI<br/>answer · evidence · source bias · map"]
     B --> UI
     C --> UI
     D --> UI
-
-    classDef store fill:#eef,stroke:#557,color:#113;
-    classDef nollm fill:#fff3e0,stroke:#c80,color:#630;
-    classDef filt fill:#e3f2fd,stroke:#1565c0,color:#0d2b4d;
-    class PARQUET,CHROMA,BM25IDX,INDEXES store;
-    class B,D nollm;
-    class WHERE filt;
 ```
 
-### Hybrid retrieval internals (paths A & C)
+**Router.** First match wins: refusal keywords → path D; aggregation keywords plus a semantic concept → path C; aggregation keywords alone → path B; everything else → path A. Keyword lists live in `router.py`, so every routing decision can be traced to a rule.
 
-``` mermaid
-flowchart LR
-    Q(["query"]) --> EMB["BGE-large embed"]
-    Q --> TOKQ["BM25 tokenize"]
-    Q -.->|"router extracts<br/>year · country · oblast"| WHERE[/"where-filter<br/>(may be empty)"/]
+**Hybrid retrieval.** The question is embedded with BGE-large-en-v1.5 and searched in ChromaDB, and tokenised and scored with BM25. Both legs are pre-filtered to the extracted place and year, take their top 20, and are fused with Reciprocal Rank Fusion (k = 60). The top 5 events go into the prompt.
 
-    CHROMA[("ChromaDB<br/>vectors + metadata")] --> VEC["cosine search<br/>semantic pool (20)"]
-    BM25IDX[("bm25/index.pkl")] --> BM25["BM25 scoring<br/>bm25 pool (20)"]
-    EMB --> VEC
-    TOKQ --> BM25
-
-    WHERE -.->|filter| VEC
-    WHERE -.->|filter| BM25
-
-    VEC --> RRF{{"Reciprocal Rank Fusion<br/>Σ 1 / (60 + rank + 1)<br/>order-only · weighting 1:1"}}
-    BM25 --> RRF
-    RRF --> TOPK["top-k RetrievalResult[]<br/>id · document · metadata ·<br/>vector_rank · bm25_rank · rrf_score"]
-
-    classDef filt fill:#e3f2fd,stroke:#1565c0,color:#0d2b4d;
-    classDef store fill:#eef,stroke:#557,color:#113;
-    class WHERE filt;
-    class CHROMA,BM25IDX store;
-```
-
-Both legs draw their candidate pool from a **prebuilt store** — the dense leg from ChromaDB (vectors + metadata), the sparse leg from `bm25/index.pkl` — and the same router-extracted `where` dict **pre-filters both** to in-scope events *before* each ranker selects its top pool. The dense leg filters natively inside ChromaDB; the sparse leg filters by masking BM25 scores to the in-scope id set before truncation (no index rebuild). The identical `where` also drives `structured_query.apply_filters` on path B — **one filter shape, three execution engines**. The filter is a hard pre-scope (exact match on categorical fields); the rankers order only what survives it.
-
-### BM25 tokenization — what ships vs what was tested
-
-The lexical branch is a deliberately minimal baseline. Lowercasing and regex tokenization are the only preprocessing in production; every other standard lever (e.g. stemming, stopword removal) was tested as a single-knob experiment and **not adopted** (full numbers in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md)).
-
-``` mermaid
-flowchart LR
-    RAW["raw text<br/>(headline / query)"] --> LOWER["lowercase"]
-    LOWER --> REGEX["regex split<br/>re.findall([a-z0-9]+)"]
-    REGEX --> BASE(["tokens → BM25Okapi"])
-    BASE -.->|v004| STEM["Snowball stemming"]
-    BASE -.->|v004| STOP["stopword removal"]
-    BASE -.->|v006| ALIAS["alias canonicalization<br/>(transliteration folding)"]
-
-    classDef adopted fill:#e8f5e9,stroke:#2e7d32,color:#1b3d1f;
-    classDef tested fill:#f2f2f2,stroke:#999,color:#555,stroke-dasharray:4 3;
-    class LOWER,REGEX,BASE adopted;
-    class STEM,STOP,ALIAS tested;
-```
-
-| Lever | Status | Verdict |
-|------------------------|------------------------|------------------------|
-| Lowercasing | ✅ adopted (baseline) | standard; index/query symmetric |
-| Regex tokenize `[a-z0-9]+` | ✅ adopted (baseline) | simple, transparent, fast |
-| Snowball stemming | tested (v004) | not adopted — net-negative at k=10; broadens matches but deeper, and nudges top-rank hits down |
-| Stopword removal | tested (v004) | not adopted — redundant with BM25's IDF term, which already down-weights high-document-frequency tokens |
-| Alias canonicalization | tested (v006) | not adopted **for BM25** — UCDP records already carry both spellings in the same event, so folding adds no matches and slightly perturbs scores. *Adopted for the router*, where it fixes oblast filters (structured 30/30). |
-
-Flags for stemming, stopword removal, and canonicalization remain in `bm25_index.py` (off by default, can be activated anytime), persisted on the index so index-time and query-time tokenization stay symmetric — useful for future NGO data that may lack UCDP's spelling redundancy.
-
-### Router (strict priority — first match wins)
-
-```
-1. REFUSAL keywords present              → Path D (Refusal)
-2. AGGREGATION keywords present
-     2a. AND semantic concept present    → Path C (Hybrid)
-     2b. else                            → Path B (Structured)
-3. default                               → Path A (Semantic)
-```
-
-Keyword lists are exhaustive and inline in `router.py` so behavior is fully predictable. Filter extraction (year / country / oblast, via a shared canonicalization layer) runs independently of the path choice.
-
-For full keyword lists, the affiliation taxonomy, configuration schema, and component-level detail, see [`PROJECT_SUMMARY_UCDP.md`](./PROJECT_SUMMARY_UCDP.md).
+**BM25 preprocessing** is lowercase plus regex tokenisation. Stemming, stopword removal and alias folding were tested and did not improve retrieval, so they are off by default (flags in `bm25_index.py`).
 
 ## Quick start
 
-### Prerequisites {#prerequisites}
+**Prerequisites:** Python 3.12, [uv](https://github.com/astral-sh/uv), and [Ollama](https://ollama.com) with the answer model pulled.
 
--   Python 3.12
--   [`uv`](https://github.com/astral-sh/uv) for dependency management
--   [Ollama](https://ollama.com) running locally with the `llama3.2:3b` model pulled
-
-``` bash
-ollama pull llama3.2:3b
-ollama serve
-```
-
-### Installation
-
-``` bash
+```bash
+ollama pull mistral:7b
 git clone https://github.com/floew2/rag-ucdp.git
 cd rag-ucdp
 uv sync
 ```
 
-### Data and indexing
+**Build the indexes (once).** Run `notebooks/02_indexing.ipynb`. It embeds the 28,531 events with BGE-large into `data/chroma_db/` and writes the BM25 index to `data/bm25/index.pkl`. The first run downloads the embedding model (about 1.3 GB); on CPU, embedding takes tens of minutes.
 
-The UCDP GED v25.1 CSV must be downloaded separately from [ucdp.uu.se/downloads](https://ucdp.uu.se/downloads) (license redistribution constraints) and placed at `data/raw/GEDEvent_v25_1.csv`. The Ukraine-scoped parquet (`data/processed/events_ukraine.parquet`, 3.6 MB) is committed for reproducibility.
+**Run the app.**
 
-Building the ChromaDB + BM25 indexes on Intel Mac CPU is slow (BGE-large's full-corpus embedding needs \~13 GB and OOMs on macOS MPS), so the recommended path is a one-time Colab GPU build:
-
-``` bash
-# Open notebooks/colab_indexing.ipynb in Google Colab (T4 GPU, ~1 min),
-# download the resulting zip, and extract into:
-#   data/chroma_db/
-#   data/bm25/index.pkl
+```bash
+uv run streamlit run app/streamlit_app.py
 ```
 
-Both directories are gitignored. The runtime app only embeds **query strings**, which is fast on CPU.
+**Run the tests** (no Ollama or indexes needed):
 
-### Running
-
-``` bash
-uv run streamlit run app/streamlit_app.py               # demo UI
-uv run jupyter notebook notebooks/11_evaluation.ipynb   # four-track eval + ablations
+```bash
+uv run pytest
 ```
 
-### Tests {#tests}
+**Configuration** lives in [`config/config.yaml`](config/config.yaml): data paths, scope, retrieval pool sizes, the embedding and answer models, the Ollama URL and the sampling temperature. The environment variable `OLLAMA_BASE_URL` overrides the Ollama URL.
 
-``` bash
-uv run pytest                        # full suite (214 tests, <15 s)
-uv run pytest tests/test_router.py   # a single file
-```
-
-------------------------------------------------------------------------
-
-## Evaluation {#evaluation}
-
-The evaluation is the project's analytical core. Four tracks each target a different component with the metric that fits it: the **router** (classification accuracy / macro-F1), the **structured** path-B aggregation (exact-match), the **retriever** (HR\@k · MRR\@k · set-Recall\@k), and the **generator** (SAS · citation faithfulness). Every test item also carries a **category tag** (e.g. factual, paraphrased, landmark, infrastructure, atrocity, refusal), so each track breaks down per category — which is what turns a single aggregate number into actionable error analysis (the paraphrase regression below was found this way, not in the headline metric).
-
-Each test set has **two tiers**: a curated set (representative use cases, i.e. queries phrased the way a typical analyst would ask, hitting capabilities the system is designed for) and a stress extension (failure-mode probes). Concretely, per track the stress items target:
-
--   **Retrieval** — paraphrased queries that strip out the exact keywords (the anchor-token problem: "*civilians sheltering*" instead of naming the Drama Theatre), so BM25 has nothing to latch onto.
-
--   **Router** — queries with implicit intent that dodge the keyword rules: aggregation phrased without aggregation keywords ("*yearly breakdown*"), or refusal-worthy questions without obvious causal/opinion words ("what drove the escalation").
-
--   **Structured** — edge-case canonicalization (the *Odesa/Bryansk* transliteration mismatches, e.g. a user token is "*odesa*" but the `adm_1` column in UCDP stores that region as "*Odessa oblast*").
-
--   **Generation** — refusals, hard paraphrases, multi-event synthesis.
-
-**Experiments** in this project were versionized. A **version** (v003, v004, …) is a distinct *system configuration* — a specific set of components and knobs — evaluated against the **same fixed test sets**, so differences between versions reflect the design change, not a change in what's being measured. The full per-version detail (setup, deltas, mechanisms, verdicts) lives in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
-
-### Ablation summary — effective top-10 retrieval (Δ vs v003, n=30)
-
-| version | knob changed | HR\@10 | MRR\@10 | set-Rec\@10 | SAS | verdict |
-|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
-| **v003** | vanilla baseline (hybrid) | 0.867 | 0.622 | 0.686 | 0.715 | reference |
-| v004 | BM25 stemming + stopword removal | 0.833 | 0.604 | 0.666 | —ᵃ | not adopted (net-negative) |
-| v005 | weighted RRF (sweep) | 0.867 | 0.622 | 0.686 | 0.729ᵇ | not adopted (1:1 is best) |
-| v006 | alias canonicalization | 0.867 | 0.622 | 0.677 | 0.729ᵇ | **router fix adopted** (structured 28→30/30); BM25 alias index not adopted |
-| v007 | \+ cross-encoder rerank (MiniLM) | 0.833 | 0.653 | 0.655 | —ᶜ | not adopted (paraphrase regressed) |
-| v008 | \+ cross-encoder rerank (BGE) | 0.833 | 0.571 | 0.573 | —ᶜ | not adopted (stronger model is worse) |
-| **v009** | **filtered harness + BM25 pre-filter (new baseline)** | 0.867 | 0.640 | 0.686 | 0.742 | **adopted** (supersedes v003) |
-
-*SAS is a **generation-track** metric (n=20, separate test set), included here for convenience; it is non-deterministic (temperature \> 0), so cross-version deltas below \~0.02 are sampling noise, not knob effects. ᵃ v004's generation run was void (Ollama down → empty answers); not re-measured. ᵇ within ±0.02 of v003 — generation was unchanged in these retrieval experiments, so the move is context jitter, not signal. ᶜ generation not re-run for the reranker experiments (retrieval-only). The only clean, comparable SAS points are v003 (0.715) and v009 (0.742).*
-
-The Δ-vs-v003 logic above holds for v003–v008, which share one *unfiltered* harness. **v009 is different in kind:** it corrects the harness so evaluation exercises the production *filtered* path (the router's `where` filter was previously inactive in eval), then fixes the three filter bugs that correction exposed — country-from-actor over-reach (now locative-only), the Kyiv city/oblast split (now `$in [oblast, city]`), and the ChromaDB-invalid year-range shape — and moves BM25 from post- to pre-filtering. It is therefore a **new reference point, not a single-knob delta**: `HR@10`/`set-Recall@10` are unchanged (most queries carry no filter), `MRR@10` improves (+0.018) where filters tighten the in-scope set. v009 established the filtered-path baseline; **v010** then re-evaluates that same configuration under the finalized harness (30/30 candidate pool, structured set expanded to 54) and is the current headline baseline — retrieval logic is unchanged from v009, so the small set-Recall / MRR shifts are the deeper-pool measurement, not a knob. v003–v008 remain valid relative to each other. Full account — including the *administrative-boundary* limitation it documents — is the v009 entry in [`evals/RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md).
-
-### Additive experiments since baseline (v011–v013 — documented, not promoted)
-
-Three post-baseline runs extend the analysis without changing the promoted configuration: router, structured, and retrieval logic are identical to v010 in all three. Each is left *additive* pending the NGO validation step described at the end of this section.
-
--   **v011 — prompt-depth ablation (generation only).** Retrieval is held fixed (retrieve once at top-15); only the number of events placed in the LLM prompt varies, with 3 repeats per depth to separate a real effect from temperature noise. SAS is effectively flat between a 5- and a 10-event prompt (0.730 vs 0.734, inside the ±0.005–0.007 run-to-run spread) and drops at 15 (0.717); faithfulness stays 1.000 throughout. **Verdict:** keep the prompt shallow (top-10) — more context does not help here and slightly hurts. This isolates a clean point: retrieving *deep* for recall metrics is fine, but the *prompt slice* should stay tight.
-
--   **v012 — method-independent gold (retrieval + generation).** The circular-gold rebuild flagged under [Limitations](#limitations). Candidates were pooled across five diverse arms (BM25, dense, RRF, HyDE, multi-query) and blind-labeled to 362 relevant / 287 partial across 30 queries; the *same* production retriever was then re-scored against this harder gold — HR\@10 0.900 · MRR\@10 0.688 · set-Recall\@10 0.460 · Precision\@10 0.380 · nDCG\@10 0.604 · R-Precision 0.467. The headline finding is what the independent gold exposes: **set-Recall\@10 falls from the v010 figure of 0.659 to 0.460 — this is the circular-gold optimism being *measured*, not a regression.** The old gold was pooled from the system's own output, so a relevant event the retriever never surfaced could not enter it; the method-independent gold can, and the retriever recovers only ~46 % of graded-relevant events at k=10. That shortfall is precisely the recall headroom the query-expansion work targets. HR\@10 stays high (0.900) because most queries still surface *something* relevant near the top — the gap is completeness (recall), not top-hit presence.
-
--   **v013 — prompt-fix (generation only).** A softened `SYSTEM_PROMPT` (explicit semantic-match hint; refuse *only* when nothing relevant is retrieved), with retrieval identical to v012, evaluated on the 30-query gold-triad set (distinct from the n=20 headline generation set). Mean SAS 0.740 → 0.775, faithfulness held at 1.000, refusals 3 → 1. The defensible signal is not the +0.035 mean (near single-run noise) but the mechanism: the *Bucha* query flips from an unwarranted refusal to a correct answer (SAS 0.45 → 0.89) while faithfulness stays perfect — the softer prompt recovered a real answer *without* beginning to invent, which is the exact failure mode a laxer refusal rule risks. The one remaining refusal (*hospitals*) is correct behaviour if UCDP carries no hospital-coded events. **Verdict:** adopt the v013 prompt; promotion to headline waits on the κ step so the generation and gold numbers move together.
-
-**Why "not promoted" yet.** v012's gold labels are a first pass by a single judge. Before these numbers replace the v010 headline, the labels need NGO validation — a second annotator plus a Cohen's κ inter-rater-agreement check — so the reported recall reflects an agreed relevance standard rather than one person's calls. Until then v010 stays the promoted baseline and v011–v013 stand as documented, reproducible extensions.
-
-------------------------------------------------------------------------
-
-## Limitations
-
--   **Rule-based router; multi-query expansion (mq-Mistral) helps modestly, reranking rejected.** The rule-based router's B-as-A/D-as-A gaps and the tier-4 paraphrase failures remain (a semantic/LLM router is future work). Multi-query expansion with a Mistral-7B variant generator gives a modest, real full-gold gain (v016) and is the recommended expansion config; **cross-encoder reranking is dropped** — three models (MiniLM-L-6, BGE, BGE-reranker-large) all regressed this recall-first, short-record task (v015/v017), a task-fit rather than model-size problem. **Recovery of baseline-unreachable events is a documented structural ceiling:** expansion, three rerankers, and a stronger variant model all failed to move it (HyDE untried). See [Outlook](#outlook).
--   **BM25 uses no stemming or stopword removal** — a deliberate baseline; the ablation (v004) showed it nets slightly negative here.
--   **Path C (hybrid) aggregates over the top-50 retrieved without a relevance cut — counts are untrustworthy in both directions.** `execute_hybrid_path` retrieves a fixed `top_k = 50` and aggregates (count / sum / breakdown) over *all* of them. Retrieval ranks by semantic proximity; it does not decide relevance *membership*, so the aggregate over-counts when fewer than 50 events are truly relevant (marginal noise is swept in) and under-counts when more than 50 are (hard cap at 50). The ranked evidence list is still valuable as a **triage / evidence view**; the aggregate *number* should not be read as a true total. Fix in [Outlook](#outlook).
--   **Modest test-set sizes** (n=20–50 per track). Adequate to surface failure modes; not for tight confidence intervals. Single-pass, no cross-validation.
--   **set-Recall was measured against a partially circular gold set — now quantified.** The original gold events were pooled from the retrieval system's own top-k output, so set-Recall was biased optimistic: a relevant event the retriever never surfaces could not enter the gold. A method-independent gold has since been **built** (v012) — candidates pooled across five diverse arms (BM25, dense, RRF, HyDE, multi-query), blind-labeled to 362 relevant / 287 partial across 30 queries. Re-scoring the *same* production retriever against it drops set-Recall\@10 from 0.659 to 0.460, putting a number on the optimism directly (see the v012 entry under [Evaluation](#evaluation)). NGO validation of the labels (a second annotator + Cohen's κ) is still **pending**, so v010 remains the promoted baseline.
--   **Generation eval is path-A-isolated**, by design — it measures LLM quality given retrieved context, not end-to-end routing behavior.
--   **Hard `adm_1` filters exclude across-boundary events.** A metadata filter scoped to one oblast drops genuinely relevant events coded *just across* an administrative line from the queried place — e.g. a ZNPP event coded to the Dnipropetrovsk/Nikopol bank (the Dnipro river is the oblast boundary), or the Krasnodar-side strike on the Kerch bridge. The filter is correct *per its predicate*; the predicate is narrower than user intent. Surfaced and documented in v009 (kept in the gold, not trimmed).
--   **English-only embeddings.** BGE-large-en-v1.5; UCDP headlines are predominantly English but contain transliterated terms whose spelling variants (Odesa/Odessa, Kyiv/Kiev) affect retrieval.
--   **Source-bias taxonomy is hand-curated** (\~963 outlets, 13 categories); new outlets in future UCDP releases need manual classification.
--   **Folium maps use online OSM tiles**; offline operation needs self-hosted tiles. Indexes are built once (Colab) — refreshing for a new UCDP release is a manual notebook step.
-
-------------------------------------------------------------------------
-
-## Outlook / Roadmap {#outlook}
-
-Consolidated next steps for the NGO phase, grouped by leverage. The retrieval architecture is now **settled**: multi-query expansion with a Mistral-7B variant generator (mq-Mistral, no reranker) is the recommended config (v016); cross-encoder reranking is rejected across three models (v015/v017); and recovery of baseline-unreachable events is a documented structural ceiling. See [Evaluation](#evaluation) and the changelog. The items below are open.
-
-**Evaluation rigor — unblocks promotion.**
--   **NGO κ-validation of the v012 gold** — second annotator + Cohen's κ; on acceptable agreement, v012 + v013 + v015 promote *together* to replace the v010 headline. The single gate in front of everything else.
--   **Repeated measurements** — the v012–v015 numbers are single-run; 2–3 repeats (or a fixed temperature) to separate signal from the ~0.02 SAS / sampling noise.
--   **Merge the n=20 generation set into the 30-query triad set** — retire the two-regime split (`generation.yaml` n=20 vs the n=30 gold triads) into one coherent generation gold, so SAS is comparable across all versions.
--   **Stronger answer-similarity metric** — current SAS is BGE bi-encoder cosine (cheap, but a blunt proxy); a cross-encoder STS or LLM-as-judge would track answer quality better. Pair with **claim-level faithfulness** — the current metric checks citation *presence*, not whether each claim is supported, which is too weak for atrocity reporting.
--   **Precision–recall curves + a unified eval dashboard** — one view across all paths, all k, and repeated runs, instead of per-version tables.
-
-**NGO-facing depth — the tool's differentiators (foundations already exist).**
--   **Source-bias surfacing** — `source_bias.py` + the ~963-outlet taxonomy already classify outlets; extend to per-event **source counts and single-source flags**, **outlet-concentration / one-sidedness** (is an event reported only by one side's media?), and **reporting-gap detection** (regions/periods systematically under-reported).
--   **Uncertainty surfacing** — the casualty range (`low`/`best`/`high`) and `deaths_civilians` are already ingested; surface the *range* in answers instead of a point figure, and add `geo_precision` / `date_prec` (confirm parquet coverage) so province-centroid events aren't drawn as exact points. Consider ingesting `deaths_a`/`deaths_b`/`deaths_unknown` for a civilian-vs-combatant split.
--   **Geospatial** — `maps.py` (Folium) exists; extend to precision-aware markers, temporal animation, density/heatmaps, and linking the map to retrieval results; self-hosted tiles for offline use.
-
-**Retrieval / generation.**
--   **Path C relevance selection — fix the untrustworthy hybrid counts** *(correctness, not an experiment).* Path C aggregates over the top-50 retrieved with no relevance boundary (see [Limitations](#limitations)). Insert a relevance-selection step *within* the retrieved pool before aggregating — an LLM / agent judging each candidate relevant-or-not, or a learned score threshold / dynamic cutoff — so the count reflects truly-relevant events rather than a fixed 50. Trade-offs: it makes Path C non-deterministic and adds an LLM step (a «kein Blackbox» cost — surface each event's keep/drop decision in the trace), and it needs its own eval (the structured 54/54 covers Path B, not Path C counts). For an NGO tool a *trustworthy* count matters more than a fast one, so this ranks high.
--   **HyDE expansion arm** *(the one open retrieval lever)* — v016 settled the variant-model question: Mistral 7B fixes llama's factual drift and improves reachable-event recall, but does **not** recover baseline-unreachable events (held-out flat). HyDE — embedding an LLM-written hypothetical document — is the one untried arm that might reach them; evaluate it against the held-out subset, treating it as a recall test not an ordering one.
--   **Domain-adapted reranker** *(low priority)* — off-the-shelf reranking is rejected across three cross-encoders (v015/v017): even BGE-reranker-large is worse on every axis, because rerankers score UCDP's terse records low (task-fit, not model-size). Any revival would need a reranker *fine-tuned on conflict-event records*, which is expensive and a long shot — deprioritised below HyDE and the NGO features.
--   **Semantic / LLM router** — addresses the B-as-A / D-as-A misclassifications; keep the rule-based router as the auditable default.
--   **Fuzzy string matching** in the router's place/actor extraction and `canonicalization.py` — tolerates spelling variants the regex/gazetteer misses, at a transparency cost (a similarity threshold is less auditable than a named rule).
-
-**Generalization & productionization.**
--   **De-Ukraine-ify the hardcoded layers** — the regex router rules and the gazetteer/alias tables are Ukraine-specific; a second conflict (Sudan, Myanmar) is both the real NGO requirement and the honest test of how much is portable.
--   **Docker** the pipeline for reproducible deployment, and a **UCDP data-update pipeline** (monthly Candidate releases) for a live tool instead of the current manual index rebuild.
-
-------------------------------------------------------------------------
-
-## Repository structure
+## Repository layout
 
 ```
 rag-ucdp/
-├── README.md                       ← you are here (portfolio narrative)
-├── PROJECT_SUMMARY_UCDP.md         ← deep technical reference
-├── pyproject.toml · uv.lock · .pre-commit-config.yaml · .github/workflows/ci.yml · LICENSE
-├── config/                         ← config.yaml · aliases.yaml · source_affiliations.yaml
+├── app/
+│   └── streamlit_app.py        # web UI
+├── config/
+│   ├── config.yaml             # all runtime settings
+│   ├── aliases.yaml            # place-name spelling variants
+│   └── source_affiliations.yaml  # outlet → affiliation category
 ├── data/
-│   ├── raw/                        ← gitignored (CSV)
-│   ├── processed/events_ukraine.parquet   ← committed, 3.6 MB
-│   └── chroma_db/ · bm25/          ← gitignored, Colab-built
-├── evals/
-│   ├── router · structured · retrieval · generation .yaml   ← two-tier test sets
-│   ├── results_v001.json … v017.json                          ← per-version outputs
-│   └── RESULTS_CHANGELOG.md                                  ← single-knob ablation log
-├── notebooks/                      ← 01_data_exploration · 02_indexing · colab_indexing · 10_hand_labeling · 11_evaluation · 12_pooling
-├── notes/anchor-token-finding.md   ← deep dive on the paraphrase failure
-├── src/rag_ucdp/                   ← data_loading · preprocessing · embeddings · vector_store ·
-│                                     bm25_index · retrieval · router · structured_query · hybrid_path ·
-│                                     source_bias · maps · canonicalization · reranking · query_expansion · generation · evaluation
-├── app/streamlit_app.py
-└── tests/                          ← 214 tests, <15 s
+│   └── processed/
+│       └── events_ukraine.parquet  # UCDP GED 25.1, Ukraine 2022–2024
+├── docs/img/                   # README images
+├── notebooks/                  # data exploration, indexing, evaluation
+├── src/rag_ucdp/
+│   ├── router.py               # path classification + filter extraction
+│   ├── retrieval.py            # hybrid retrieval (dense + BM25 + RRF)
+│   ├── structured_query.py     # pandas aggregation (path B)
+│   ├── hybrid_path.py          # retrieval + aggregation (path C)
+│   ├── generation.py           # Ollama client, prompt, citation parsing
+│   ├── source_bias.py          # affiliation counts, Simpson index
+│   ├── maps.py                 # Folium maps
+│   ├── query_expansion.py      # multi-query expansion
+│   ├── reranking.py            # cross-encoder reranking (evaluated, off)
+│   ├── evaluation.py           # metrics for all four components
+│   └── …                       # data loading, embeddings, indexes, config
+├── tests/                      # pytest suite, runs in ~15 s
+├── pyproject.toml · uv.lock
+└── .github/workflows/ci.yml    # ruff, mypy, pytest
 ```
 
-### Notebook workflow (order of work)
+## Limitations
 
-The pipeline logic lives in `src/rag_ucdp/`; the notebooks are the workbench that built and validated it, run in this order:
+- **Keyword router.** Questions that imply aggregation or opinion without the usual keywords are routed to the semantic path (5 of 15 aggregation and 3 of 12 refusal test queries).
+- **Path C counts are not totals.** The hybrid path aggregates over the top 50 retrieved events without a relevance cut-off, so its numbers can over- or under-count. Its event list is still useful as evidence.
+- **Administrative filters are strict.** A filter on one oblast drops relevant events coded just across the boundary (e.g. the opposite bank of the Dnipro).
+- **Source taxonomy is hand-curated.** 63 classified outlets cover 94 % of the 37,854 source mentions in the corpus; the remaining outlets count as *other / unknown*.
+- **Scope.** English embeddings, Ukraine only, small test sets (20–54 queries per component), online map tiles.
 
-1.  **`01_data_exploration.ipynb`** — understand UCDP GED and scope it to the Ukraine 2022–2024 subset. Most downstream design choices (which fields to index, how `build_document_text` phrases each event, the router's categories and filter granularity) trace back to what this notebook surfaced about the data.
-2.  **`02_indexing.ipynb`** (the heavy embedding step offloaded to **`colab_indexing.ipynb`** on a T4 GPU) — build the retrieval indexes: BGE-large embeddings into ChromaDB (HNSW) plus the BM25 keyword index over the same documents.
-3.  **`10_hand_labeling.ipynb`** — hand-label the evaluation gold (relevant events per query, gold answers): the manual work behind the eval's credibility.
-4.  **`11_evaluation.ipynb`** — the main workbench: run the four eval tracks (router / structured / retrieval / generation) and every versioned experiment logged in [`RESULTS_CHANGELOG.md`](./evals/RESULTS_CHANGELOG.md) (the v-series).
-5.  **`12_pooling.ipynb`** — build the method-independent gold (v012): pool candidates across five retrieval arms and blind-label them, to correct the circular-gold optimism.
+## Next steps
 
-The numbering gap (03–09) mirrors the original project phases; those steps hardened into `src/rag_ucdp/` modules rather than standing notebooks.
+- Add a relevance step to path C so its counts reflect only relevant events.
+- Bring multi-query expansion into the app and report casualty ranges (low / best / high) instead of point figures.
+- Measure generation with Mistral 7B as the answer model, with repeated runs and a second annotator for the relevance labels.
+- Package the app with Docker and extend to a second conflict.
 
-------------------------------------------------------------------------
+## Data and citation
 
-## Data and citations {#data-and-citations}
+The repository includes a Ukraine subset of UCDP GED version 25.1, redistributed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) as permitted by [UCDP](https://ucdp.uu.se/downloads/). Please cite:
 
-UCDP GED v25.1, downloaded from [ucdp.uu.se/downloads](https://ucdp.uu.se/downloads) under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). Required citations (verbatim, per UCDP's terms):
+- Davies, S., Engström, G., Pettersson, T., & Öberg, M. (2025). Organized violence 1989–2024, and the challenges of identifying civilian victims. *Journal of Peace Research*, 62(4).
+- Sundberg, R., & Melander, E. (2013). Introducing the UCDP Georeferenced Event Dataset. *Journal of Peace Research*, 50(4).
 
--   Davies, S., Engström, G., Pettersson, T., & Öberg, M. (2025). Organized violence 1989–2024, and the challenges of identifying civilian victims. *Journal of Peace Research*, 62(4).
--   Sundberg, R., & Melander, E. (2013). Introducing the UCDP Georeferenced Event Dataset. *Journal of Peace Research*, 50(4).
--   DEMSCORE grant: 2021-00162.
+UCDP data collection is supported by DEMSCORE (grant 2021-00162).
 
-------------------------------------------------------------------------
+The data describes lethal violence. This tool is meant for analysis and documentation, not for operational use.
 
-## Acknowledgments
+## License
 
-
-------------------------------------------------------------------------
-
-## License {#license}
-
-Source code: MIT (see [LICENSE](./LICENSE)). UCDP GED v25.1 data: CC-BY-4.0 (see citations above).
-
-------------------------------------------------------------------------
-
-*For the deepest technical detail — architecture internals, full keyword lists, the affiliation taxonomy, configuration schema, the failure-mode taxonomy, and the full decision log — see [`PROJECT_SUMMARY_UCDP.md`](./PROJECT_SUMMARY_UCDP.md).*
+Code: MIT, see [LICENSE](LICENSE). Data: CC BY 4.0, see above.
