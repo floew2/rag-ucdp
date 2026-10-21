@@ -31,3 +31,7 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.9.1
+    hooks:
+      - id: nbstripout
