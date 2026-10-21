@@ -22,46 +22,27 @@ query is no slower than subsequent ones.
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
-from typing import Any
 
 import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
-from rag_ucdp.bm25_index import BM25Index
-from rag_ucdp.config import load_config
-from rag_ucdp.data_loading import load_processed
-from rag_ucdp.embeddings import EmbeddingModel
-from rag_ucdp.generation import MistralGenerator, build_refusal
-from rag_ucdp.hybrid_path import execute_hybrid_path
-from rag_ucdp.maps import make_event_map, retrieval_results_to_dataframe
-from rag_ucdp.retrieval import RetrievalResult, hybrid_retrieve
-from rag_ucdp.router import RouterDecision, RouterPath, classify
-from rag_ucdp.source_bias import SourceAffiliationLookup, compute_source_bias
-from rag_ucdp.structured_query import (
-    AggregationKind,
-    apply_filters,
-    execute_structured_query,
+from rag_ucdp.config import DEFAULT_CONFIG_PATH, load_config
+from rag_ucdp.maps import make_event_map
+from rag_ucdp.pipeline import (
+    PATH_LABELS,
+    Answer,
+    Resources,
+    answer,
+    check_status,
+    load_resources,
 )
-from rag_ucdp.vector_store import VectorStore
+from rag_ucdp.retrieval import RetrievalResult
+from rag_ucdp.router import RouterDecision, RouterPath
+from rag_ucdp.source_bias import SourceBiasReport
+from rag_ucdp.structured_query import AggregationKind
 
 logger = logging.getLogger(__name__)
-
-PROJECT_ROOT = Path(__file__).parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
-PROCESSED_PARQUET = PROJECT_ROOT / "data" / "processed" / "events_ukraine.parquet"
-CHROMA_DIR = PROJECT_ROOT / "data" / "chroma_db"
-BM25_PATH = PROJECT_ROOT / "data" / "bm25" / "index.pkl"
-AFFILIATIONS_YAML = PROJECT_ROOT / "config" / "source_affiliations.yaml"
-
-PATH_LABELS = {
-    RouterPath.SEMANTIC: "A · Semantic",
-    RouterPath.STRUCTURED: "B · Structured",
-    RouterPath.HYBRID: "C · Hybrid",
-    RouterPath.REFUSAL: "D · Refusal",
-}
 
 EXAMPLE_QUERIES = {
     "A · Semantic": "What kinds of attacks happened in Mariupol?",
@@ -70,11 +51,8 @@ EXAMPLE_QUERIES = {
     "D · Refusal": "Why did Russia invade Ukraine?",
 }
 
-#: Events retrieved on Path A for evidence / map / source-bias panels.
-RETRIEVAL_TOP_K = 10
-#: Of those, how many are placed in the LLM prompt as cited context. The
-#: evidence panel marks which events were sent so the funnel is transparent.
-PROMPT_TOP_K = 5
+#: Maximum number of events drawn on the map for structured (path B) answers.
+MAP_SAMPLE_SIZE = 200
 
 
 def _diversity_gauge_html(simpsons_index: float, label: str) -> str:
@@ -121,36 +99,9 @@ def _diversity_gauge_html(simpsons_index: float, label: str) -> str:
 
 
 @st.cache_resource(show_spinner="Loading indexes and warming up models...")
-def load_resources() -> dict[str, Any]:
+def get_resources() -> Resources:
     """Load all heavyweight resources once. Cached across reruns."""
-    df = load_processed(PROCESSED_PARQUET)
-    vector_store = VectorStore(persist_dir=CHROMA_DIR, collection_name="ucdp_events")
-    bm25 = BM25Index.load(BM25_PATH)
-    embedder = EmbeddingModel(device="cpu")
-    # Warm up so the first user query isn't penalized by model loading.
-    embedder.embed(["warmup"])
-    lookup = SourceAffiliationLookup.from_yaml(AFFILIATIONS_YAML)
-    cfg = load_config(CONFIG_PATH)
-    # OLLAMA_BASE_URL overrides the config, e.g. when the app runs in Docker
-    # and Ollama runs natively on the host.
-    generator = MistralGenerator(
-        base_url=os.environ.get("OLLAMA_BASE_URL", cfg.models.ollama_base_url),
-        model=cfg.models.llm_model,
-        temperature=cfg.generation.temperature,
-    )
-    return {
-        "df": df,
-        "vector_store": vector_store,
-        "bm25": bm25,
-        "embedder": embedder,
-        "lookup": lookup,
-        "generator": generator,
-    }
-
-
-def data_is_ready() -> bool:
-    """Return True iff all required data and indexes are present on disk."""
-    return PROCESSED_PARQUET.exists() and CHROMA_DIR.exists() and BM25_PATH.exists()
+    return load_resources(load_config(DEFAULT_CONFIG_PATH))
 
 
 # --- Rendering helpers ---
@@ -169,13 +120,11 @@ def render_router_decision(decision: RouterDecision) -> None:
             st.caption("No filters extracted from the query.")
 
 
-def render_source_bias_panel(events_df: pd.DataFrame, lookup: SourceAffiliationLookup) -> None:
+def render_source_bias_panel(report: SourceBiasReport | None) -> None:
     """Render the source-bias panel: gauge + description + per-affiliation chart."""
     st.subheader("Source bias")
-    report = compute_source_bias(events_df, lookup)
-
-    if report.total_outlet_mentions == 0:
-        st.info(report.description)
+    if report is None or report.total_outlet_mentions == 0:
+        st.info(report.description if report else "No sources to summarize.")
         return
 
     if report.dominance_warning:
@@ -210,7 +159,7 @@ def render_evidence_panel(
         st.info("No events retrieved.")
         return
 
-    shown = retrieval_results[:RETRIEVAL_TOP_K]
+    shown = retrieval_results[:10]
     cited = set(cited_ids or [])
     if prompt_top_k is not None:
         sent = min(prompt_top_k, len(shown))
@@ -258,143 +207,113 @@ def render_breakdown_chart(breakdown: pd.DataFrame) -> None:
     st.bar_chart(breakdown.set_index(group_col))
 
 
-# --- Path executors ---
+# --- Path renderers ---
 
 
-def execute_path_a(query: str, decision: RouterDecision, resources: dict[str, Any]) -> None:
-    """Path A: semantic retrieval + LLM generation."""
-    with st.spinner("Retrieving relevant events..."):
-        results = hybrid_retrieve(
-            query=query,
-            embedder=resources["embedder"],
-            vector_store=resources["vector_store"],
-            bm25=resources["bm25"],
-            top_k=RETRIEVAL_TOP_K,
-            where=decision.filters or None,
-        )
-
-    with st.spinner(f"Generating answer with {resources['generator'].model}..."):
-        gen_result = resources["generator"].generate(query, results, top_k=PROMPT_TOP_K)
-
+def render_semantic(result: Answer) -> None:
+    """Path A: cited LLM answer over hybrid retrieval."""
     st.subheader("Answer")
-    if gen_result.error:
-        st.error(gen_result.answer)
+    if result.error:
+        st.error(result.text)
     else:
-        st.markdown(gen_result.answer)
-        if gen_result.sources_cited:
-            st.caption(f"Cited events: {', '.join(gen_result.sources_cited)}")
-    st.caption(f"Generated in {gen_result.elapsed_seconds:.1f}s")
-
-    events_df = retrieval_results_to_dataframe(results)
+        st.markdown(result.text)
+        if result.cited_ids:
+            st.caption(f"Cited events: {', '.join(result.cited_ids)}")
+    if result.generation is not None:
+        st.caption(f"Generated in {result.generation.elapsed_seconds:.1f}s")
 
     col1, col2 = st.columns(2)
     with col1:
-        render_map_panel(events_df)
+        render_map_panel(result.events_df if result.events_df is not None else pd.DataFrame())
     with col2:
-        render_source_bias_panel(events_df, resources["lookup"])
+        render_source_bias_panel(result.source_bias)
 
-    render_evidence_panel(results, prompt_top_k=PROMPT_TOP_K, cited_ids=gen_result.sources_cited)
-
-    with st.expander("🔧 Debug: prompt sent to the model"):
-        st.code(gen_result.prompt, language=None)
-
-
-def execute_path_b(query: str, decision: RouterDecision, resources: dict[str, Any]) -> None:
-    """Path B: structured aggregation, no LLM."""
-    notice = (
-        decision.extracted.get("notice")
-        if decision.extracted.get("structured_unavailable")
-        else None
-    )
-    result = execute_structured_query(
-        query, resources["df"], decision.filters, redirect_notice=notice
+    render_evidence_panel(
+        result.events, prompt_top_k=result.prompt_top_k, cited_ids=result.cited_ids
     )
 
+    if result.generation is not None:
+        with st.expander("🔧 Debug: prompt sent to the model"):
+            st.code(result.generation.prompt, language=None)
+
+
+def render_structured(result: Answer) -> None:
+    """Path B: exact aggregation, no LLM."""
     st.subheader("Answer")
-    if result.kind is AggregationKind.REDIRECT:
-        # Free-text-only city or unrecognized place: the router declined to
-        # aggregate rather than silently sum the whole corpus.
-        st.warning(result.description)
+    structured = result.structured
+    if structured is not None and structured.kind is AggregationKind.REDIRECT:
+        # The router declined to aggregate rather than silently sum the corpus.
+        st.warning(result.text)
         return
-    st.markdown(f"**{result.description}**")
-    # "No black box": disclose that a city-scoped count is raion-level (broader
-    # than the city proper).
-    if decision.extracted.get("scope_note"):
-        st.caption(f"Scope: {decision.extracted['scope_note']}")
+    st.markdown(f"**{result.text}**")
+    for note in result.notes:
+        st.caption(note)
+    if structured is not None and structured.breakdown is not None:
+        render_breakdown_chart(structured.breakdown)
 
-    if result.breakdown is not None:
-        render_breakdown_chart(result.breakdown)
-
-    filtered_df = apply_filters(resources["df"], decision.filters)
-    if len(filtered_df) > 200:
-        sample = filtered_df.sample(n=200, random_state=42)
+    events_df = result.events_df if result.events_df is not None else pd.DataFrame()
+    if len(events_df) > MAP_SAMPLE_SIZE:
+        sample = events_df.sample(n=MAP_SAMPLE_SIZE, random_state=42)
         caption = (
-            f"Map shows a random sample of 200 events from "
-            f"{len(filtered_df):,} matching the filter."
+            f"Map shows a random sample of {MAP_SAMPLE_SIZE} events from "
+            f"{len(events_df):,} matching the filter."
         )
     else:
-        sample = filtered_df
-        caption = ""
+        sample, caption = events_df, ""
 
     col1, col2 = st.columns(2)
     with col1:
         render_map_panel(sample, caption=caption)
     with col2:
-        render_source_bias_panel(filtered_df, resources["lookup"])
+        render_source_bias_panel(result.source_bias)
 
 
-def execute_path_c(query: str, decision: RouterDecision, resources: dict[str, Any]) -> None:
-    """Path C: hybrid — retrieve a relevant subset, then aggregate over it."""
-    with st.spinner("Retrieving relevant events and aggregating..."):
-        result = execute_hybrid_path(
-            query=query,
-            embedder=resources["embedder"],
-            vector_store=resources["vector_store"],
-            bm25=resources["bm25"],
-            df=resources["df"],
-            filters=decision.filters,
-            retrieval_top_k=50,
-        )
-
+def render_hybrid(result: Answer) -> None:
+    """Path C: retrieve a relevant subset, then aggregate over it."""
     st.subheader("Answer")
-    st.markdown(f"**{result.structured_result.description}**")
-    st.caption(result.description)
-
-    if result.structured_result.breakdown is not None:
-        render_breakdown_chart(result.structured_result.breakdown)
-
-    events_df = retrieval_results_to_dataframe(result.retrieval_results)
+    st.markdown(f"**{result.text}**")
+    for note in result.notes:
+        st.caption(note)
+    if result.structured is not None and result.structured.breakdown is not None:
+        render_breakdown_chart(result.structured.breakdown)
 
     col1, col2 = st.columns(2)
     with col1:
-        render_map_panel(events_df)
+        render_map_panel(result.events_df if result.events_df is not None else pd.DataFrame())
     with col2:
-        render_source_bias_panel(events_df, resources["lookup"])
+        render_source_bias_panel(result.source_bias)
 
-    render_evidence_panel(result.retrieval_results)
+    render_evidence_panel(result.events)
 
 
-def execute_path_d(query: str, decision: RouterDecision, _resources: dict[str, Any]) -> None:
+def render_refusal(result: Answer) -> None:
     """Path D: refusal."""
-    result = build_refusal(query)
     st.subheader("Refusal")
-    st.warning(result.answer)
-    st.caption(f"Router reason: {decision.reason}")
+    st.warning(result.text)
+    st.caption(f"Router reason: {result.decision.reason}")
+
+
+RENDERERS = {
+    RouterPath.SEMANTIC: render_semantic,
+    RouterPath.STRUCTURED: render_structured,
+    RouterPath.HYBRID: render_hybrid,
+    RouterPath.REFUSAL: render_refusal,
+}
 
 
 # --- Sidebar ---
 
 
-def render_sidebar(resources: dict[str, Any]) -> None:
+def render_sidebar(resources: Resources) -> None:
     """Status indicators and example-query buttons."""
     with st.sidebar:
         st.subheader("Status")
-        st.success(f"Events loaded: {len(resources['df']):,}")
-        st.success(f"Vector store: {resources['vector_store'].count:,} docs")
-        st.success(f"BM25 index: {len(resources['bm25']):,} docs")
+        st.success(f"Events loaded: {len(resources.df):,}")
+        st.success(f"Vector store: {resources.vector_store.count:,} docs")
+        st.success(f"BM25 index: {len(resources.bm25):,} docs")
 
-        if resources["generator"].health_check():
-            st.success(f"Ollama: {resources['generator'].model} reachable")
+        if resources.generator.health_check():
+            st.success(f"Ollama: {resources.generator.model} reachable")
         else:
             st.warning(
                 "Ollama not reachable. Paths A and C will show an error; paths B and D still work."
@@ -419,26 +338,24 @@ def main() -> None:
         layout="wide",
     )
 
+    cfg = load_config(DEFAULT_CONFIG_PATH)
     st.title("UCDP RAG · Ukraine 2022+")
     st.markdown(
         "Hybrid retrieval over UCDP GED conflict events. "
         "Quantitative queries go to deterministic aggregation; semantic "
-        f"queries go to a local LLM ({load_config(CONFIG_PATH).models.llm_model}) "
-        "over hybrid retrieval. "
+        f"queries go to a local LLM ({cfg.models.llm_model}) over hybrid retrieval. "
         "Source bias is surfaced explicitly."
     )
 
-    if not data_is_ready():
+    missing = [item for item in check_status(cfg) if item.required and not item.ok]
+    if missing:
         st.error(
-            "Required data or indexes not found. Expected:\n\n"
-            f"- `{PROCESSED_PARQUET.relative_to(PROJECT_ROOT)}`\n"
-            f"- `{CHROMA_DIR.relative_to(PROJECT_ROOT)}/`\n"
-            f"- `{BM25_PATH.relative_to(PROJECT_ROOT)}`\n\n"
-            "Run `notebooks/02_indexing.ipynb` to build the indexes."
+            "Required data or indexes not found:\n\n"
+            + "\n".join(f"- {item.name}: {item.detail} → run `{item.fix}`" for item in missing)
         )
         return
 
-    resources = load_resources()
+    resources = get_resources()
     render_sidebar(resources)
 
     # Consume a pending query from an example button click, if any.
@@ -453,17 +370,11 @@ def main() -> None:
         st.info("Enter a query above to begin, or pick an example from the sidebar.")
         return
 
-    decision = classify(query)
-    render_router_decision(decision)
+    with st.spinner("Answering..."):
+        result = answer(query, resources)
+    render_router_decision(result.decision)
     st.divider()
-
-    dispatchers = {
-        RouterPath.SEMANTIC: execute_path_a,
-        RouterPath.STRUCTURED: execute_path_b,
-        RouterPath.HYBRID: execute_path_c,
-        RouterPath.REFUSAL: execute_path_d,
-    }
-    dispatchers[decision.path](query, decision, resources)
+    RENDERERS[result.path](result)
 
 
 if __name__ == "__main__":
