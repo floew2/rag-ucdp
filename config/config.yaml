@@ -1,8 +1,13 @@
-# Project configuration. Edit values here; the Python config object reflects them.
+# Project configuration. Relative paths are resolved against the repository root.
 
 data:
-  ucdp_csv_path: "data/raw/GEDEvent_v25_1.csv"
-  processed_dir: "data/processed"
+  ged_version: "25.1"                     # UCDP GED release used by `rag-ucdp data`
+  raw_dir: "data/raw"                     # downloaded UCDP CSV (gitignored)
+  processed_file: "data/processed/events_ukraine.parquet"
+  chroma_dir: "data/chroma_db"            # vector index (gitignored)
+  collection_name: "ucdp_events"
+  bm25_path: "data/bm25/index.pkl"        # keyword index (gitignored)
+  source_affiliations: "config/source_affiliations.yaml"
 
 scope:
   conflict_parties_include: ["Ukraine", "Government of Ukraine"]
@@ -10,15 +15,17 @@ scope:
   date_end: "2024-12-31"
 
 retrieval:
-  top_k: 10
-  semantic_top_k: 20
-  bm25_top_k: 20
-  rrf_k: 60
+  top_k: 10              # events retrieved for semantic questions (path A)
+  semantic_top_k: 20     # dense candidate pool before fusion
+  bm25_top_k: 20         # BM25 candidate pool before fusion
+  rrf_k: 60              # Reciprocal Rank Fusion constant
+  hybrid_top_k: 50       # events aggregated on the hybrid path (C)
 
 models:
   embedding_model: "BAAI/bge-large-en-v1.5"
+  embedding_device: "cpu"                 # cpu | mps | cuda
   llm_model: "mistral:7b"
-  ollama_base_url: "http://localhost:11434"
+  ollama_base_url: "http://localhost:11434"   # env OLLAMA_BASE_URL overrides
 
 router:
   mode: "rules"
@@ -27,3 +34,4 @@ router:
 generation:
   temperature: 0.2
   max_tokens: 512
+  prompt_top_k: 5        # retrieved events placed in the LLM prompt
