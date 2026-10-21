@@ -56,7 +56,7 @@ flowchart TD
     R -->|"causal / opinion"| D["D · Refusal<br/>templated, no LLM"]
     R -->|semantic| A["A · Semantic<br/>hybrid retrieval → LLM answer with citations"]
     R -->|quantitative| B["B · Structured<br/>pandas aggregation, no LLM"]
-    R -->|mixed| C["C · Hybrid<br/>retrieval + aggregation → LLM"]
+    R -->|mixed| C["C · Hybrid<br/>retrieval + aggregation, no LLM"]
 
     subgraph IDX["Indexes, built once from the parquet"]
         CH[("ChromaDB<br/>BGE-large vectors")]
@@ -83,7 +83,9 @@ flowchart TD
 
 ## Quick start
 
-**Prerequisites:** Python 3.12, [uv](https://github.com/astral-sh/uv), and [Ollama](https://ollama.com) with the answer model pulled.
+You need Python 3.12, [uv](https://github.com/astral-sh/uv) and [Ollama](https://ollama.com). The first setup downloads the embedding model (about 1.3 GB) and Mistral 7B (about 4 GB).
+
+**1. Install**
 
 ```bash
 ollama pull mistral:7b
@@ -92,28 +94,54 @@ cd rag-ucdp
 uv sync
 ```
 
-**Build the indexes (once).** Run `notebooks/02_indexing.ipynb`. It embeds the 28,531 events with BGE-large into `data/chroma_db/` and writes the BM25 index to `data/bm25/index.pkl`. The first run downloads the embedding model (about 1.3 GB); on CPU, embedding takes tens of minutes.
-
-**Run the app.**
+**2. Build the search indexes (once).** The event data ships with the repository, so no download is needed.
 
 ```bash
-uv run streamlit run app/streamlit_app.py
+uv run rag-ucdp index
 ```
 
-**Run the tests** (no Ollama or indexes needed):
+This embeds the 28,531 events and writes the vector and BM25 indexes to `data/`. On a laptop CPU it takes a while (expect tens of minutes); on Apple silicon `--device mps` can be faster if enough memory is free.
+
+**3. Check and run.** Ollama must be running (the Ollama app, or `ollama serve`).
+
+```bash
+uv run rag-ucdp check      # lists anything still missing, with the command that fixes it
+uv run rag-ucdp app        # web app at http://localhost:8501
+```
+
+Or ask from the terminal:
+
+```bash
+uv run rag-ucdp ask "How many fatalities in Donetsk in 2023?"
+uv run rag-ucdp ask "What happened in Mariupol?" --json
+```
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `rag-ucdp check` | Shows whether data, indexes, Ollama and the answer model are in place |
+| `rag-ucdp index [--device cpu\|mps\|cuda] [--force]` | Builds the vector and BM25 indexes from the event table |
+| `rag-ucdp app` | Starts the web app; extra options go to Streamlit (e.g. `--server.port 8600`) |
+| `rag-ucdp ask "…" [--json]` | Answers one question in the terminal |
+| `rag-ucdp data [--version 26.1] [--csv FILE] [--force]` | Downloads a UCDP GED release (or reads a local CSV) and rebuilds the event table |
+
+**Updating the data.** To use a newer UCDP release, widen `scope` in `config/config.yaml` if needed, then run `rag-ucdp data --version 26.1 --force` and `rag-ucdp index --force`. The results above were measured on version 25.1.
+
+**Configuration** lives in [`config/config.yaml`](config/config.yaml): UCDP version and scope, file locations, retrieval settings, models and the Ollama URL. The environment variable `OLLAMA_BASE_URL` overrides the Ollama URL.
+
+**Tests** need neither Ollama nor the indexes:
 
 ```bash
 uv run pytest
 ```
-
-**Configuration** lives in [`config/config.yaml`](config/config.yaml): data paths, scope, retrieval pool sizes, the embedding and answer models, the Ollama URL and the sampling temperature. The environment variable `OLLAMA_BASE_URL` overrides the Ollama URL.
 
 ## Repository layout
 
 ```
 rag-ucdp/
 ├── app/
-│   └── streamlit_app.py        # web UI
+│   └── streamlit_app.py        # web UI (rendering only)
 ├── config/
 │   ├── config.yaml             # all runtime settings
 │   ├── aliases.yaml            # place-name spelling variants
@@ -124,6 +152,10 @@ rag-ucdp/
 ├── docs/img/                   # README images
 ├── notebooks/                  # data exploration, indexing, evaluation
 ├── src/rag_ucdp/
+│   ├── cli.py                  # `rag-ucdp` command
+│   ├── pipeline.py             # question → answer, shared by app and CLI
+│   ├── data_loading.py         # UCDP download, scope filter, parquet
+│   ├── indexing.py             # builds the vector and BM25 indexes
 │   ├── router.py               # path classification + filter extraction
 │   ├── retrieval.py            # hybrid retrieval (dense + BM25 + RRF)
 │   ├── structured_query.py     # pandas aggregation (path B)
@@ -134,8 +166,8 @@ rag-ucdp/
 │   ├── query_expansion.py      # multi-query expansion
 │   ├── reranking.py            # cross-encoder reranking (evaluated, off)
 │   ├── evaluation.py           # metrics for all four components
-│   └── …                       # data loading, embeddings, indexes, config
-├── tests/                      # pytest suite, runs in ~15 s
+│   └── …                       # embeddings, index wrappers, config
+├── tests/                      # pytest suite, runs in ~10 s
 ├── pyproject.toml · uv.lock
 └── .github/workflows/ci.yml    # ruff, mypy, pytest
 ```
@@ -159,7 +191,7 @@ rag-ucdp/
 
 ## Data and citation
 
-The repository includes a Ukraine subset of UCDP GED version 25.1, redistributed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) as permitted by [UCDP](https://ucdp.uu.se/downloads/). Please cite:
+The repository includes a subset of UCDP GED version 25.1, redistributed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) as permitted by [UCDP](https://ucdp.uu.se/downloads/). Changes from the original: only events with Ukraine as a conflict party between 2022-01-01 and 2024-12-31 are kept, and two derived columns are added (violence-type label, list of source outlets). Please cite:
 
 - Davies, S., Engström, G., Pettersson, T., & Öberg, M. (2025). Organized violence 1989–2024, and the challenges of identifying civilian victims. *Journal of Peace Research*, 62(4).
 - Sundberg, R., & Melander, E. (2013). Introducing the UCDP Georeferenced Event Dataset. *Journal of Peace Research*, 50(4).
