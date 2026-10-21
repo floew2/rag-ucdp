@@ -35,3 +35,13 @@ outputs/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Internal material — kept locally, not published
+evals/
+PROJECT_SUMMARY_UCDP.md
+notes/
+
+# Local settings and secrets
+config.local.yaml
+.env
+.env.*
