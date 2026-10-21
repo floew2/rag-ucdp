@@ -40,7 +40,7 @@ Retrieval is scored against a pooled relevance set: candidates from five differe
 | + multi-query + cross-encoder (MiniLM-L-6) | 0.90 | 0.68 | 0.60 | 0.47 | **0.53** |
 | + multi-query + cross-encoder (bge-reranker-large) | 0.83 | 0.57 | 0.51 | 0.42 | 0.44 |
 
-- **Multi-query expansion helps modestly** on every metric. It is implemented in `query_expansion.py`; the app does not use it yet.
+- **Multi-query expansion helps modestly** on every metric (implemented in `query_expansion.py`).
 - **Cross-encoder reranking hurts** on this data, and the larger reranker hurts more. UCDP records are short and formulaic, which off-the-shelf rerankers score poorly. Reranking was therefore left out for the moment.
 - **Recall is the open problem.** At k=10 the default retriever finds about half of all relevant events. Questions phrased without the words the records use (e.g. *"civilians sheltering"* instead of the building's name) are the main failure mode.
 
@@ -150,10 +150,12 @@ rag-ucdp/
 
 ## Next steps
 
-- Add a relevance step to path C so its counts reflect only relevant events.
-- Bring multi-query expansion into the app and report casualty ranges (low / best / high) instead of point figures.
-- Measure generation with Mistral 7B as the answer model, with repeated runs and a second annotator for the relevance labels.
-- Package the app with Docker and extend to a second conflict.
+- **Agentic routing.** Replace the keyword router with an LLM agent that chooses the path and tools, keeping the rule-based router as an auditable fallback.
+- **Multi-query expansion in the app.** It improves every retrieval metric but is not yet wired into the app.
+- **Trustworthy path C counts.** Add a relevance step so the hybrid path aggregates only relevant events.
+- **Uncertainty in answers.** Report casualty ranges (low / best / high) instead of point figures.
+- **Evaluation.** Measure generation with Mistral 7B as the answer model, with repeated runs and a second annotator for the relevance labels.
+- **Deployment and scope.** Package the app with Docker and extend to a second conflict.
 
 ## Data and citation
 
