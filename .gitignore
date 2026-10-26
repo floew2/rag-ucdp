@@ -41,6 +41,11 @@ evals/
 PROJECT_SUMMARY_UCDP.md
 notes/
 
+# Evaluation and labelling notebooks (need the private test sets)
+notebooks/10_hand_labeling.*
+notebooks/11_evaluation.ipynb
+notebooks/12_pooling.ipynb
+
 # Local settings and secrets
 config.local.yaml
 .env
