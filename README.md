@@ -130,6 +130,8 @@ uv run rag-ucdp ask "What happened in Mariupol?" --json
 
 **Configuration** lives in [`config/config.yaml`](config/config.yaml): UCDP version and scope, file locations, retrieval settings, models and the Ollama URL. The environment variable `OLLAMA_BASE_URL` overrides the Ollama URL.
 
+**Notebooks** explain the data and walk through one question end to end: `uv run jupyter lab notebooks/`. The first needs only the repository; the second needs the indexes.
+
 **Tests** need neither Ollama nor the indexes:
 
 ```bash
@@ -150,7 +152,9 @@ rag-ucdp/
 │   └── processed/
 │       └── events_ukraine.parquet  # UCDP GED 25.1, Ukraine 2022–2024
 ├── docs/img/                   # README images
-├── notebooks/                  # data exploration, indexing, evaluation
+├── notebooks/
+│   ├── 01_data_exploration.ipynb      # what the data looks like, and why it shaped the design
+│   └── 02_retrieval_and_answering.ipynb  # a question followed through router, retrieval and answer
 ├── src/rag_ucdp/
 │   ├── cli.py                  # `rag-ucdp` command
 │   ├── pipeline.py             # question → answer, shared by app and CLI
