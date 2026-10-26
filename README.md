@@ -83,77 +83,66 @@ flowchart TD
 
 ## Quick start
 
-You need Python 3.12, [uv](https://github.com/astral-sh/uv) and [Ollama](https://ollama.com). The first setup downloads the embedding model (about 1.3 GB) and Mistral 7B (about 4 GB).
+### With Docker (recommended: nothing else to install)
 
-**1. Install**
+You only need [Docker](https://docs.docker.com/get-docker/) and an internet connection for the first start.
 
 ```bash
-ollama pull mistral:7b
+git clone https://github.com/floew2/rag-ucdp.git
+cd rag-ucdp
+docker compose up -d
+```
+
+Then open http://localhost:8501.
+
+The first start does a one-time setup: it downloads the embedding model (about 1.3 GB) and the answer model Mistral 7B (about 4 GB), and builds the search indexes. Indexing runs on CPU and can take a long time (expect tens of minutes or more). Follow it with `docker compose logs -f init`; the app opens once it has finished. Later starts take seconds.
+
+| Task | Command |
+|---|---|
+| Stop / start again | `docker compose down` / `docker compose up -d` |
+| Check what is ready | `docker compose run --rm app rag-ucdp check` |
+| Ask from the terminal | `docker compose run --rm app rag-ucdp ask "How many fatalities in 2023?"` |
+| Update to a newer UCDP release | edit `config/config.yaml`, then `docker compose run --rm app rag-ucdp data --version 26.1 --force` and `docker compose run --rm app rag-ucdp index --force` |
+
+- **Everything stays on your computer.** The event table and indexes are in the `data/` folder of your clone; the models are in Docker volumes. After the first start no internet is needed.
+- **Settings** are in `config/config.yaml`; restart after editing (`docker compose restart app`).
+- **Speed.** Answers are generated on CPU, which takes a while per question. On a Mac, Docker cannot use the GPU; if Ollama is installed there natively, use it instead: `docker compose -f compose.yaml -f compose.host-ollama.yaml up -d`. If that Ollama is not reachable, start it with `OLLAMA_HOST=0.0.0.0`.
+- **On Linux** the containers run as user ID 1000 and need write access to `data/`.
+
+### Without Docker (for development)
+
+You need Python 3.12, [uv](https://github.com/astral-sh/uv) and [Ollama](https://ollama.com).
+
+```bash
 git clone https://github.com/floew2/rag-ucdp.git
 cd rag-ucdp
 uv sync
-```
-
-**2. Build the search indexes (once).** The event data ships with the repository, so no download is needed.
-
-```bash
-uv run rag-ucdp index
-```
-
-This embeds the 28,531 events and writes the vector and BM25 indexes to `data/`. On a laptop CPU it takes a while (expect tens of minutes); on Apple silicon `--device mps` can be faster if enough memory is free.
-
-**3. Check and run.** Ollama must be running (the Ollama app, or `ollama serve`).
-
-```bash
-uv run rag-ucdp check      # lists anything still missing, with the command that fixes it
+uv run rag-ucdp prepare    # builds the indexes and downloads the answer model (once)
 uv run rag-ucdp app        # web app at http://localhost:8501
 ```
 
-Or ask from the terminal:
-
-```bash
-uv run rag-ucdp ask "How many fatalities in Donetsk in 2023?"
-uv run rag-ucdp ask "What happened in Mariupol?" --json
-```
-
-### Run with Docker
-
-Needs [Docker](https://docs.docker.com/get-docker/) only, no Python or uv. The image is about 2 GB and runs on CPU. Ollama runs natively on your computer as above; on a Mac this is also the only way it can use the GPU.
-
-```bash
-git clone https://github.com/floew2/rag-ucdp.git
-cd rag-ucdp
-docker compose run --rm app rag-ucdp index   # once
-docker compose up                            # web app at http://localhost:8501
-```
-
-- **Indexes and data** live in the `data/` folder of your clone, so indexes built natively (e.g. with `--device mps`) are reused by Docker and vice versa. Inside Docker, indexing runs on CPU.
-- **Configuration**: `config/` is mounted read-only; edit `config.yaml` and restart.
-- **Ollama in a container** (Linux, or no native install): `OLLAMA_BASE_URL=http://ollama:11434 docker compose --profile ollama up`, then `docker compose exec ollama ollama pull mistral:7b`.
-- **Not reaching native Ollama?** `docker compose run --rm app rag-ucdp check` shows whether Ollama is reachable. If not, start Ollama with `OLLAMA_HOST=0.0.0.0` so it accepts connections from containers.
-- **On Linux**, the container runs as user ID 1000 and needs write access to `data/`.
+Ollama must be running (the Ollama app, or `ollama serve`). On Apple silicon, `uv run rag-ucdp index --device mps` can build the indexes faster than `prepare`, which uses the CPU. Indexes built this way are also used by Docker, since both read `data/`.
 
 ### Commands
+
+All commands work the same with `uv run rag-ucdp …` and with `docker compose run --rm app rag-ucdp …`.
 
 | Command | What it does |
 |---|---|
 | `rag-ucdp check` | Shows whether data, indexes, Ollama and the answer model are in place |
+| `rag-ucdp prepare` | Builds missing indexes and downloads a missing answer model; skips what is already there |
 | `rag-ucdp index [--device cpu\|mps\|cuda] [--force]` | Builds the vector and BM25 indexes from the event table |
 | `rag-ucdp app` | Starts the web app; extra options go to Streamlit (e.g. `--server.port 8600`) |
 | `rag-ucdp ask "…" [--json]` | Answers one question in the terminal |
 | `rag-ucdp data [--version 26.1] [--csv FILE] [--force]` | Downloads a UCDP GED release (or reads a local CSV) and rebuilds the event table |
 
-**Updating the data.** To use a newer UCDP release, widen `scope` in `config/config.yaml` if needed, then run `rag-ucdp data --version 26.1 --force` and `rag-ucdp index --force`. The results above were measured on version 25.1.
+**Changing the data.** To cover another period or a newer UCDP release, edit `scope` (dates) or `data.ged_version` in `config/config.yaml`, then run `rag-ucdp data --force` and `rag-ucdp index --force`. The results above were measured on version 25.1, 2022–2024.
 
 **Configuration** lives in [`config/config.yaml`](config/config.yaml): UCDP version and scope, file locations, retrieval settings, models and the Ollama URL. The environment variable `OLLAMA_BASE_URL` overrides the Ollama URL.
 
 **Notebooks** explain the data and walk through one question end to end: `uv run jupyter lab notebooks/`. The first needs only the repository; the second needs the indexes.
 
-**Tests** need neither Ollama nor the indexes:
-
-```bash
-uv run pytest
-```
+**Tests** need neither Ollama nor the indexes: `uv run pytest`.
 
 ## Repository layout
 
@@ -189,7 +178,7 @@ rag-ucdp/
 │   ├── evaluation.py           # metrics for all four components
 │   └── …                       # embeddings, index wrappers, config
 ├── tests/                      # pytest suite, runs in ~10 s
-├── Dockerfile · compose.yaml   # container setup
+├── Dockerfile · compose.yaml   # container setup (compose.host-ollama.yaml: use a native Ollama)
 ├── pyproject.toml · uv.lock
 └── .github/workflows/ci.yml    # ruff, mypy, pytest, Docker build
 ```
