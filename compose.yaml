@@ -1,0 +1,38 @@
+# Run the app in Docker.
+#
+#   docker compose run --rm app rag-ucdp index   # once: build the search indexes
+#   docker compose up                            # web app at http://localhost:8501
+#
+# By default the app uses Ollama running natively on your computer (on a Mac
+# this is the only way Ollama gets the GPU). To run Ollama in a container
+# instead:
+#
+#   OLLAMA_BASE_URL=http://ollama:11434 docker compose --profile ollama up
+#   docker compose exec ollama ollama pull mistral:7b
+
+name: rag-ucdp
+
+services:
+  app:
+    build: .
+    image: rag-ucdp:latest
+    ports:
+      - "127.0.0.1:8501:8501"
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # needed on Linux; built in on Docker Desktop
+    volumes:
+      - ./data:/app/data                       # event table and indexes, shared with a native install
+      - ./config:/app/config:ro                # edit config.yaml without rebuilding
+      - hf-cache:/home/app/.cache/huggingface  # embedding model, downloaded once
+
+  ollama:
+    image: ollama/ollama:0.17.0
+    profiles: ["ollama"]
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  hf-cache:
+  ollama:
