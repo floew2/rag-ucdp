@@ -1,0 +1,24 @@
+# Use an Ollama that runs on this computer instead of the Ollama container.
+# On a Mac this lets Ollama use the GPU.
+#
+#   docker compose -f compose.yaml -f compose.host-ollama.yaml up -d
+#
+# Needs Ollama installed and running on the computer. If the app reports that
+# Ollama is not reachable, start Ollama with OLLAMA_HOST=0.0.0.0.
+
+services:
+  ollama:
+    profiles: ["container-ollama"]   # not started
+
+  init:
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: !reset {}
+
+  app:
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
