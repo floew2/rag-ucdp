@@ -51,7 +51,16 @@ jobs:
         run: docker manifest inspect ollama/ollama:0.17.0 > /dev/null
 
       - name: Build image
-        run: docker build -t rag-ucdp:ci .
+        run: |
+          set +e
+          docker build --progress=plain -t rag-ucdp:ci . 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # Surface the end of the build log as an annotation.
+            msg=$(tail -n 40 build.log | sed -e ':a;N;$!ba' -e 's/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::error title=docker build failed::$msg"
+          fi
+          exit "$status"
 
       - name: Image size
         run: docker image ls rag-ucdp:ci
