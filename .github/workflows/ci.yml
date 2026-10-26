@@ -53,8 +53,13 @@ jobs:
       - name: Build image
         run: docker build -t rag-ucdp:ci .
 
-      - name: CLI runs in the container
-        run: docker run --rm rag-ucdp:ci rag-ucdp --help
+      - name: Image size
+        run: docker image ls rag-ucdp:ci
+
+      - name: CLI and torch work in the container
+        run: |
+          docker run --rm rag-ucdp:ci rag-ucdp --help
+          docker run --rm rag-ucdp:ci python -c "import torch, sentence_transformers; print('torch', torch.__version__)"
 
       - name: Web app starts and reports healthy
         run: |
