@@ -6,7 +6,7 @@ Question answering over conflict-event data: a routed hybrid RAG system on the [
 
 ![Streamlit app: router decision, cited answer, event map and source-bias panel](docs/img/streamlit-gui.png)
 
-**Built with:** BGE-large-en-v1.5 · ChromaDB · BM25 (`rank_bm25`) · Reciprocal Rank Fusion · Ollama (Mistral 7B, local) · pandas · Streamlit · Folium · Python 3.12 · uv · ruff · mypy · pytest
+**Built with:** BGE-large-en-v1.5 · ChromaDB · BM25 (`rank_bm25`) · Reciprocal Rank Fusion · Ollama (Mistral 7B, local) · pandas · Streamlit · Folium · Python 3.12 · uv · Docker · ruff · mypy · pytest
 
 ## What it does
 
@@ -116,6 +116,23 @@ uv run rag-ucdp ask "How many fatalities in Donetsk in 2023?"
 uv run rag-ucdp ask "What happened in Mariupol?" --json
 ```
 
+### Run with Docker
+
+Needs [Docker](https://docs.docker.com/get-docker/) only, no Python or uv. Ollama runs natively on your computer as above; on a Mac this is also the only way it can use the GPU.
+
+```bash
+git clone https://github.com/floew2/rag-ucdp.git
+cd rag-ucdp
+docker compose run --rm app rag-ucdp index   # once
+docker compose up                            # web app at http://localhost:8501
+```
+
+- **Indexes and data** live in the `data/` folder of your clone, so indexes built natively (e.g. with `--device mps`) are reused by Docker and vice versa. Inside Docker, indexing runs on CPU.
+- **Configuration**: `config/` is mounted read-only; edit `config.yaml` and restart.
+- **Ollama in a container** (Linux, or no native install): `OLLAMA_BASE_URL=http://ollama:11434 docker compose --profile ollama up`, then `docker compose exec ollama ollama pull mistral:7b`.
+- **Not reaching native Ollama?** `docker compose run --rm app rag-ucdp check` shows whether Ollama is reachable. If not, start Ollama with `OLLAMA_HOST=0.0.0.0` so it accepts connections from containers.
+- **On Linux**, the container runs as user ID 1000 and needs write access to `data/`.
+
 ### Commands
 
 | Command | What it does |
@@ -172,8 +189,9 @@ rag-ucdp/
 │   ├── evaluation.py           # metrics for all four components
 │   └── …                       # embeddings, index wrappers, config
 ├── tests/                      # pytest suite, runs in ~10 s
+├── Dockerfile · compose.yaml   # container setup
 ├── pyproject.toml · uv.lock
-└── .github/workflows/ci.yml    # ruff, mypy, pytest
+└── .github/workflows/ci.yml    # ruff, mypy, pytest, Docker build
 ```
 
 ## Limitations
@@ -191,7 +209,7 @@ rag-ucdp/
 - **Re-enable path C.** Add a relevance step that decides which retrieved events actually match, plus a test set with known counts, before reporting totals again.
 - **Uncertainty in answers.** Report casualty ranges (low / best / high) instead of point figures.
 - **Evaluation.** Measure generation with Mistral 7B as the answer model, with repeated runs and a second annotator for the relevance labels.
-- **Deployment and scope.** Package the app with Docker and extend to a second conflict.
+- **Scope.** Extend to a second conflict.
 
 ## Data and citation
 
