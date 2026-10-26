@@ -44,6 +44,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Free disk space
+        # The runner image ships large toolchains this job does not need.
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af > /dev/null
+          df -h /
+
       - name: Validate compose file
         run: docker compose config --quiet
 
