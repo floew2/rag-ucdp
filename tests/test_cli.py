@@ -105,3 +105,55 @@ def test_app_launches_streamlit(
     assert seen[0][1:4] == ["-m", "streamlit", "run"]
     assert seen[0][4].endswith("app/streamlit_app.py")
     assert seen[0][5:] == extra
+
+
+def test_prepare_builds_missing_indexes_and_pulls_missing_model(
+    tmp_config: tuple[Path, AppConfig],
+    sample_df: pd.DataFrame,
+    fake_embedder,
+    monkeypatch,
+    capsys,
+) -> None:
+    path, cfg = tmp_config
+    monkeypatch.setattr(rag_ucdp.embeddings, "EmbeddingModel", lambda **kw: fake_embedder)
+    out = resolve_path(cfg.data.processed_file)
+    out.parent.mkdir(parents=True)
+    sample_df.to_parquet(out)
+
+    installed: list[str] = []
+    pulls: list[str] = []
+    monkeypatch.setattr(rag_ucdp.pipeline, "wait_for_ollama", lambda url, timeout_s: True)
+    monkeypatch.setattr(rag_ucdp.pipeline, "ollama_models", lambda url: list(installed))
+
+    def fake_pull(url: str, model: str) -> bool:
+        pulls.append(model)
+        installed.append(model)
+        return True
+
+    monkeypatch.setattr(rag_ucdp.pipeline, "pull_model", fake_pull)
+
+    assert run(path, "prepare") == 0
+    assert pulls == [cfg.models.llm_model]
+    assert "Building them now" in capsys.readouterr().out
+
+    # Second run: everything is in place, nothing is rebuilt or downloaded.
+    assert run(path, "prepare") == 0
+    assert pulls == [cfg.models.llm_model]
+    output = capsys.readouterr().out
+    assert "Indexes: ready." in output and "ready." in output
+
+
+def test_prepare_tolerates_missing_ollama(
+    tmp_config: tuple[Path, AppConfig], monkeypatch, capsys
+) -> None:
+    path, _ = tmp_config
+    monkeypatch.setattr(cli, "_build_indexes", lambda cfg, device, batch: 0)
+    monkeypatch.setattr(rag_ucdp.pipeline, "wait_for_ollama", lambda url, timeout_s: False)
+
+    assert run(path, "prepare", "--wait", "0") == 0
+    assert "not reachable" in capsys.readouterr().out
+
+
+def test_prepare_fails_if_indexing_fails(tmp_config: tuple[Path, AppConfig]) -> None:
+    path, _ = tmp_config  # no event table → indexing cannot run
+    assert run(path, "prepare", "--skip-model") == 1

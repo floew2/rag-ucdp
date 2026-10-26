@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.error import URLError
@@ -84,6 +86,78 @@ def ollama_models(base_url: str, timeout_s: float = 5.0) -> list[str] | None:
     return [m.get("name", "") for m in data.get("models", [])]
 
 
+def wait_for_ollama(base_url: str, timeout_s: float = 120.0, interval_s: float = 2.0) -> bool:
+    """Wait until Ollama answers, e.g. while its container is starting.
+
+    Returns:
+        True once reachable, False if ``timeout_s`` passes first.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if ollama_models(base_url) is not None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval_s)
+
+
+def pull_model(
+    base_url: str,
+    model: str,
+    progress: Callable[[str], None] = print,
+    timeout_s: float = 3600.0,
+) -> bool:
+    """Download ``model`` into Ollama via its HTTP API, reporting progress.
+
+    Uses Ollama's streaming ``/api/pull`` endpoint, so it works the same for a
+    native Ollama and one running in a container.
+
+    Args:
+        base_url: Ollama server URL.
+        model: Model tag, e.g. ``"mistral:7b"``.
+        progress: Receives one human-readable line per status change or
+            every 10 percent.
+        timeout_s: Socket timeout per read.
+
+    Returns:
+        True if Ollama reports success, False otherwise.
+    """
+    body = json.dumps({"model": model, "name": model, "stream": True}).encode()
+    req = Request(
+        f"{base_url.rstrip('/')}/api/pull",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    last_status, last_decile = "", -1
+    try:
+        with urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 - configured URL
+            for raw in resp:
+                if not raw.strip():
+                    continue
+                event = json.loads(raw.decode())
+                if "error" in event:
+                    progress(f"Ollama: {event['error']}")
+                    return False
+                status = str(event.get("status", ""))
+                total, done = event.get("total"), event.get("completed")
+                if total and done is not None:
+                    decile = int(10 * done / total)
+                    if decile != last_decile:
+                        progress(f"  {status}: {10 * decile}% of {total / 1e9:.1f} GB")
+                        last_decile = decile
+                elif status != last_status:
+                    progress(f"  {status}")
+                    last_decile = -1
+                last_status = status
+                if status == "success":
+                    return True
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        progress(f"Pulling {model} failed: {e}")
+        return False
+    return last_status == "success"
+
+
 def check_status(cfg: AppConfig) -> list[CheckItem]:
     """Check that data, indexes and the answer model are in place.
 
@@ -146,7 +220,7 @@ def check_status(cfg: AppConfig) -> list[CheckItem]:
                 "Answer model",
                 has_model,
                 cfg.models.llm_model + (" installed" if has_model else " not installed"),
-                "" if has_model else f"ollama pull {cfg.models.llm_model}",
+                "" if has_model else "rag-ucdp prepare",
                 required=False,
             )
         )

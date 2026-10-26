@@ -6,6 +6,8 @@ Commands, in the order a new user runs them:
 - ``data``  — download UCDP GED and rebuild the processed event table
   (optional: the table for the configured release ships with the repository).
 - ``index`` — build the vector and BM25 indexes (needed once).
+- ``prepare`` — build missing indexes and download a missing answer model;
+  skips whatever is already there (used by the Docker setup).
 - ``app``   — start the Streamlit web app.
 - ``ask``   — answer one question in the terminal (text or JSON).
 
@@ -97,15 +99,26 @@ def cmd_data(cfg: AppConfig, args: argparse.Namespace) -> int:
 
 def cmd_index(cfg: AppConfig, args: argparse.Namespace) -> int:
     """Build the ChromaDB and BM25 indexes from the processed table."""
-    from rag_ucdp.data_loading import load_processed
-    from rag_ucdp.embeddings import EmbeddingModel
-    from rag_ucdp.indexing import build_indexes, indexes_exist
+    from rag_ucdp.indexing import indexes_exist
 
     chroma_dir = resolve_path(cfg.data.chroma_dir)
     bm25_path = resolve_path(cfg.data.bm25_path)
     if indexes_exist(chroma_dir, cfg.data.collection_name, bm25_path) and not args.force:
         print("Indexes already exist. Use --force to rebuild them.")
         return 0
+    code = _build_indexes(cfg, args.device, args.batch_size)
+    if code == 0:
+        print("Next: rag-ucdp app")
+    return code
+
+
+def _build_indexes(cfg: AppConfig, device: str | None, batch_size: int) -> int:
+    from rag_ucdp.data_loading import load_processed
+    from rag_ucdp.embeddings import EmbeddingModel
+    from rag_ucdp.indexing import build_indexes
+
+    chroma_dir = resolve_path(cfg.data.chroma_dir)
+    bm25_path = resolve_path(cfg.data.bm25_path)
 
     parquet = resolve_path(cfg.data.processed_file)
     if not parquet.exists():
@@ -113,7 +126,7 @@ def cmd_index(cfg: AppConfig, args: argparse.Namespace) -> int:
         return 1
 
     df = load_processed(parquet)
-    device = args.device or cfg.models.embedding_device
+    device = device or cfg.models.embedding_device
     print(
         f"Embedding {len(df):,} events with {cfg.models.embedding_model} on {device}. "
         "The first run downloads the model (about 1.3 GB); on CPU this takes a while."
@@ -124,13 +137,55 @@ def cmd_index(cfg: AppConfig, args: argparse.Namespace) -> int:
         chroma_dir,
         cfg.data.collection_name,
         bm25_path,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
     )
     print(
         f"Indexed {stats.chroma_count:,} events (vector) and {stats.bm25_count:,} (BM25) "
         f"in {stats.total_seconds / 60:.1f} min."
     )
-    print("Next: rag-ucdp app")
+    return 0
+
+
+def cmd_prepare(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Get everything ready: build missing indexes and pull a missing answer model.
+
+    Safe to run on every start: steps that are already done are skipped. The
+    Docker setup runs it before the app starts. Only a failed index build is
+    an error; without the LLM the app still answers structured questions and
+    shows what is missing, so model problems are reported but do not fail.
+    """
+    from rag_ucdp.config import ollama_base_url
+    from rag_ucdp.indexing import indexes_exist
+    from rag_ucdp.pipeline import ollama_models, pull_model, wait_for_ollama
+
+    chroma_dir = resolve_path(cfg.data.chroma_dir)
+    bm25_path = resolve_path(cfg.data.bm25_path)
+    if indexes_exist(chroma_dir, cfg.data.collection_name, bm25_path):
+        print("Indexes: ready.")
+    else:
+        print("Indexes: not built yet. Building them now (one time only).")
+        code = _build_indexes(cfg, None, 32)
+        if code != 0:
+            return code
+
+    if args.skip_model:
+        return 0
+    url, model = ollama_base_url(cfg), cfg.models.llm_model
+    print(f"Ollama: waiting for {url} …")
+    if not wait_for_ollama(url, timeout_s=args.wait):
+        print(
+            f"Warning: Ollama is not reachable at {url}. Structured questions will "
+            "work; semantic answers need Ollama."
+        )
+        return 0
+    if model in (ollama_models(url) or []):
+        print(f"Answer model: {model} ready.")
+        return 0
+    print(f"Answer model: downloading {model} (one time only, several GB) …")
+    if not pull_model(url, model):
+        print(f"Warning: could not download {model}; semantic answers need it.")
+        return 0
+    print(f"Answer model: {model} ready.")
     return 0
 
 
@@ -209,6 +264,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int, default=32, help="embedding batch size")
     p.add_argument("--force", action="store_true", help="rebuild existing indexes")
     p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser("prepare", help="build missing indexes and download a missing answer model")
+    p.add_argument(
+        "--wait", type=float, default=120.0, help="seconds to wait for Ollama (default 120)"
+    )
+    p.add_argument("--skip-model", action="store_true", help="only build the indexes")
+    p.set_defaults(func=cmd_prepare)
 
     p = sub.add_parser("app", help="start the web app (extra args go to Streamlit)")
     p.set_defaults(func=cmd_app)
