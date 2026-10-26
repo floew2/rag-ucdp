@@ -341,7 +341,8 @@ def main() -> None:
     )
 
     cfg = load_config(DEFAULT_CONFIG_PATH)
-    st.title("UCDP RAG · Ukraine 2022+")
+    period = f"{cfg.scope.date_start.year}–{cfg.scope.date_end.year}"
+    st.title(f"UCDP RAG · Ukraine {period}")
     st.markdown(
         "Hybrid retrieval over UCDP GED conflict events. "
         "Quantitative queries go to deterministic aggregation; semantic "
@@ -363,7 +364,7 @@ def main() -> None:
     # Consume a pending query from an example button click, if any.
     default_query = st.session_state.pop("pending_query", "")
     query = st.text_input(
-        "Ask about UCDP-recorded events in Ukraine (2022+)",
+        f"Ask about UCDP-recorded events in Ukraine ({period})",
         value=default_query,
         placeholder="e.g., What happened in Mariupol?",
     )
