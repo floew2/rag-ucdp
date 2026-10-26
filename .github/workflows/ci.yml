@@ -71,7 +71,7 @@ jobs:
           exit "$status"
 
       - name: Image size
-        run: docker image ls rag-ucdp:ci
+        run: echo "::notice title=Image size::$(docker image ls rag-ucdp:ci --format '{{.Size}}')"
 
       - name: CLI and torch work in the container
         run: |
