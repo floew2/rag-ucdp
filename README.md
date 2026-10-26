@@ -118,7 +118,7 @@ uv run rag-ucdp ask "What happened in Mariupol?" --json
 
 ### Run with Docker
 
-Needs [Docker](https://docs.docker.com/get-docker/) only, no Python or uv. Ollama runs natively on your computer as above; on a Mac this is also the only way it can use the GPU.
+Needs [Docker](https://docs.docker.com/get-docker/) only, no Python or uv. The image is about 2 GB and runs on CPU. Ollama runs natively on your computer as above; on a Mac this is also the only way it can use the GPU.
 
 ```bash
 git clone https://github.com/floew2/rag-ucdp.git
