@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -62,7 +63,8 @@ def build_indexes(
     bm25_path: Path,
     *,
     batch_size: int = 32,
-    show_progress: bool = True,
+    progress: Callable[[str], None] | None = None,
+    chunk_size: int = 1024,
 ) -> IndexStats:
     """Embed all events, write them to ChromaDB, and build the BM25 index.
 
@@ -76,7 +78,10 @@ def build_indexes(
         collection_name: Collection to (re)create.
         bm25_path: Destination of the pickled BM25 index.
         batch_size: Texts per embedding forward pass.
-        show_progress: Show a progress bar while embedding.
+        progress: Receives one line per embedded chunk (count, percent, time
+            left). Plain lines rather than a progress bar, so it also shows up
+            in ``docker compose logs``.
+        chunk_size: Documents per progress step.
 
     Returns:
         Counts and timings of the build.
@@ -89,7 +94,20 @@ def build_indexes(
 
     logger.info("Embedding %d documents", len(documents))
     t_embed = time.monotonic()
-    embeddings = embedder.embed(documents, batch_size=batch_size, show_progress=show_progress)
+    n = len(documents)
+    parts: list[NDArray[np.float32]] = []
+    for start in range(0, n, chunk_size):
+        chunk = documents[start : start + chunk_size]
+        parts.append(embedder.embed(chunk, batch_size=batch_size, show_progress=False))
+        if progress is not None:
+            done = start + len(chunk)
+            elapsed = time.monotonic() - t_embed
+            left = elapsed / done * (n - done)
+            progress(
+                f"  embedded {done:,} / {n:,} ({100 * done / n:.0f}%), "
+                f"about {left / 60:.0f} min left"
+            )
+    embeddings = np.concatenate(parts) if parts else np.zeros((0, 0), dtype=np.float32)
     embed_seconds = time.monotonic() - t_embed
 
     store = VectorStore(persist_dir=chroma_dir, collection_name=collection_name)

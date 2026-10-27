@@ -50,9 +50,7 @@ def resources(
 ) -> Resources:
     _, cfg = tmp_config
     chroma, bm25 = resolve_path(cfg.data.chroma_dir), resolve_path(cfg.data.bm25_path)
-    build_indexes(
-        sample_df, fake_embedder, chroma, cfg.data.collection_name, bm25, show_progress=False
-    )
+    build_indexes(sample_df, fake_embedder, chroma, cfg.data.collection_name, bm25)
     return Resources(
         cfg=cfg,
         df=sample_df,

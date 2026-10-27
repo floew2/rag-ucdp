@@ -138,6 +138,7 @@ def _build_indexes(cfg: AppConfig, device: str | None, batch_size: int) -> int:
         cfg.data.collection_name,
         bm25_path,
         batch_size=batch_size,
+        progress=lambda line: print(line, flush=True),
     )
     print(
         f"Indexed {stats.chroma_count:,} events (vector) and {stats.bm25_count:,} (BM25) "
