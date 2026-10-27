@@ -125,7 +125,7 @@ def test_pr_curve_interleaved_values():
     curve = interpolated_pr_curve(["A", "X", "B", "X", "C"], ["A", "B", "C"])
     # recall/precision points: (1/3,1.0),(2/3,2/3),(1.0,3/5)
     expected = [1.0, 1.0, 1.0, 1.0, 2 / 3, 2 / 3, 2 / 3, 3 / 5, 3 / 5, 3 / 5, 3 / 5]
-    assert all(_close(a, b) for a, b in zip(curve, expected))
+    assert all(_close(a, b) for a, b in zip(curve, expected, strict=True))
 
 
 def test_pr_curve_perfect_is_flat_one():
@@ -143,5 +143,5 @@ def test_mean_pr_curve_averages_elementwise():
     c1 = interpolated_pr_curve(["A", "B"], ["A", "B"])  # all 1.0
     c2 = interpolated_pr_curve(["X", "A"], ["A"])  # precision 0.5 at recall 1.0
     mean = mean_pr_curve(pred, gold)
-    expected = [(a + b) / 2 for a, b in zip(c1, c2)]
-    assert all(_close(a, b) for a, b in zip(mean, expected))
+    expected = [(a + b) / 2 for a, b in zip(c1, c2, strict=True)]
+    assert all(_close(a, b) for a, b in zip(mean, expected, strict=True))
