@@ -95,7 +95,7 @@ docker compose up -d
 
 Then open http://localhost:8501.
 
-The first start does a one-time setup: it downloads the embedding model (about 1.3 GB) and the answer model Mistral 7B (about 4 GB), and builds the search indexes. Indexing runs on CPU and can take a long time (expect tens of minutes or more). Follow it with `docker compose logs -f init`; the app opens once it has finished. Later starts take seconds.
+The first start does a one-time setup: it builds the app image and downloads Ollama (about 3.3 GB), the embedding model (about 1.3 GB) and the answer model Mistral 7B (about 4 GB), then builds the search indexes. Indexing runs on CPU and can take a long time (expect tens of minutes or more). Follow it with `docker compose logs -f init`; the app opens once it has finished. Later starts take seconds.
 
 | Task | Command |
 |---|---|
