@@ -118,6 +118,13 @@ def render_router_decision(decision: RouterDecision) -> None:
             st.code(str(decision.filters), language="python")
         else:
             st.caption("No filters extracted from the query.")
+        router = decision.extracted.get("router", "rules")
+        caption = f"Router: {router}"
+        if decision.extracted.get("aggregation"):
+            caption += f" · aggregation: {decision.extracted['aggregation']}"
+        if decision.extracted.get("llm_error"):
+            caption += f" · LLM unavailable ({decision.extracted['llm_error'][:80]})"
+        st.caption(caption)
 
 
 def render_source_bias_panel(report: SourceBiasReport | None) -> None:

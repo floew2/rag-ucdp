@@ -66,7 +66,11 @@ class ModelsConfig(BaseModel):
 class RouterConfig(BaseModel):
     """Router behavior settings."""
 
+    #: ``rules``: keyword router. ``llm``: the answer model fills a JSON plan
+    #: (path, places, years, aggregation), checked against the data; falls
+    #: back to the rules if Ollama fails.
     mode: str = Field(pattern="^(rules|llm)$")
+    llm_timeout_s: float = Field(default=60.0, gt=0)
     bias_warning_threshold: float = Field(ge=0.0, le=1.0)
     #: Path C counts over a fixed number of retrieved events, so its numbers
     #: are not reliable totals. While off, path-C questions get a semantic

@@ -32,9 +32,10 @@ from rag_ucdp.data_loading import load_processed
 from rag_ucdp.embeddings import EmbeddingModel
 from rag_ucdp.generation import GenerationResult, MistralGenerator, build_refusal
 from rag_ucdp.hybrid_path import execute_hybrid_path
+from rag_ucdp.llm_router import Router, make_router, rule_router
 from rag_ucdp.maps import retrieval_results_to_dataframe
 from rag_ucdp.retrieval import RetrievalResult, hybrid_retrieve
-from rag_ucdp.router import RouterDecision, RouterPath, classify
+from rag_ucdp.router import RouterDecision, RouterPath
 from rag_ucdp.source_bias import SourceAffiliationLookup, SourceBiasReport, compute_source_bias
 from rag_ucdp.structured_query import (
     AggregationKind,
@@ -241,6 +242,7 @@ class Resources:
     embedder: EmbeddingModel
     lookup: SourceAffiliationLookup
     generator: MistralGenerator
+    router: Router = rule_router
 
 
 def load_resources(cfg: AppConfig, *, warm_up: bool = True) -> Resources:
@@ -259,9 +261,10 @@ def load_resources(cfg: AppConfig, *, warm_up: bool = True) -> Resources:
     )
     if warm_up:
         embedder.embed(["warmup"])
+    df = load_processed(resolve_path(cfg.data.processed_file))
     return Resources(
         cfg=cfg,
-        df=load_processed(resolve_path(cfg.data.processed_file)),
+        df=df,
         vector_store=VectorStore(
             persist_dir=resolve_path(cfg.data.chroma_dir),
             collection_name=cfg.data.collection_name,
@@ -273,6 +276,13 @@ def load_resources(cfg: AppConfig, *, warm_up: bool = True) -> Resources:
             base_url=ollama_base_url(cfg),
             model=cfg.models.llm_model,
             temperature=cfg.generation.temperature,
+        ),
+        router=make_router(
+            cfg.router.mode,
+            df,
+            ollama_base_url(cfg),
+            cfg.models.llm_model,
+            timeout_s=cfg.router.llm_timeout_s,
         ),
     )
 
@@ -350,7 +360,7 @@ def answer(query: str, res: Resources) -> Answer:
         An :class:`Answer`. LLM failures (e.g. Ollama not running) are
         reported in ``Answer.error`` rather than raised.
     """
-    decision = classify(query)
+    decision = res.router(query)
     if decision.path is RouterPath.SEMANTIC:
         return _semantic(query, decision, res)
     if decision.path is RouterPath.STRUCTURED:
@@ -402,7 +412,14 @@ def _structured(query: str, decision: RouterDecision, res: Resources) -> Answer:
         if decision.extracted.get("structured_unavailable")
         else None
     )
-    result = execute_structured_query(query, res.df, decision.filters, redirect_notice=notice)
+    planned = decision.extracted.get("aggregation")
+    result = execute_structured_query(
+        query,
+        res.df,
+        decision.filters,
+        redirect_notice=notice,
+        kind=AggregationKind(planned) if planned else None,
+    )
     if result.kind is AggregationKind.REDIRECT:
         # The router declined to aggregate (e.g. a city with no matching
         # district) rather than silently counting the whole corpus.

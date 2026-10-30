@@ -10,6 +10,7 @@ Commands, in the order a new user runs them:
   skips whatever is already there (used by the Docker setup).
 - ``app``   — start the Streamlit web app.
 - ``ask``   — answer one question in the terminal (text or JSON).
+- ``eval-router`` — score the rule and/or LLM router on a labeled test set.
 
 All settings come from ``config/config.yaml``; ``--config`` points elsewhere.
 """
@@ -231,6 +232,74 @@ def cmd_ask(cfg: AppConfig, args: argparse.Namespace) -> int:
     return 1 if result.error else 0
 
 
+def cmd_eval_router(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Score routers on a plan test set and, optionally, the structured gold set."""
+    from rag_ucdp.config import ollama_base_url
+    from rag_ucdp.data_loading import load_processed
+    from rag_ucdp.evaluation import load_test_set, run_structured_track
+    from rag_ucdp.llm_router import make_router
+    from rag_ucdp.router_eval import evaluate_plans, load_plan_items
+
+    df = load_processed(resolve_path(cfg.data.processed_file))
+    items = load_plan_items(args.test_set)
+    labels_plan = any(
+        i.gold_years or i.gold_places or i.gold_exclude or i.gold_aggregation or i.gold_redirect
+        for i in items
+    )
+    modes = ["rules", "llm"] if args.router == "both" else [args.router]
+    report: dict[str, object] = {"test_set": str(args.test_set), "model": cfg.models.llm_model}
+
+    for mode in modes:
+        router = make_router(
+            mode, df, ollama_base_url(cfg), cfg.models.llm_model, cfg.router.llm_timeout_s
+        )
+        print(f"\n== {mode} router · {len(items)} questions ==", flush=True)
+        metrics = evaluate_plans(items, router, df)
+        print(f"path accuracy        {metrics.path_accuracy:.3f}")
+        if labels_plan:
+            print(f"filter accuracy      {metrics.filter_accuracy:.3f}   (A/B/C questions)")
+            print(f"structured accuracy  {metrics.structured_accuracy:.3f}   (B questions)")
+        print(
+            f"seconds per question {metrics.mean_seconds:.2f} mean, {metrics.max_seconds:.2f} max"
+        )
+        if mode == "llm":
+            print(f"fallbacks to rules   {metrics.fallbacks}")
+        wrong = [
+            r
+            for r in metrics.per_query
+            if not r["path_ok"] or (labels_plan and False in (r["filter_ok"], r["structured_ok"]))
+        ]
+        for r in wrong:
+            parts = [f"path {r['gold_path']}→{r['path']}"]
+            if labels_plan and r["filter_ok"] is False:
+                parts.append(f"filters {r['filters']}")
+            if labels_plan and r["structured_ok"] is False:
+                parts.append(f"aggregation {r['gold_aggregation']}→{r['aggregation']}")
+            print(f"  ✗ {r['query']}  [{'; '.join(parts)}]")
+        entry: dict[str, object] = {**metrics.summary(), "per_query": metrics.per_query}
+
+        if args.structured:
+            struct = run_structured_track(
+                load_test_set(args.structured, "structured"), df, router=router
+            )
+            print(
+                f"structured gold set  {struct.exact_match_rate:.3f} exact "
+                f"({struct.n_queries} questions, {args.structured.name})"
+            )
+            entry["structured_gold"] = {
+                "exact_match_rate": struct.exact_match_rate,
+                "n": struct.n_queries,
+                "per_query": struct.per_query,
+            }
+        report[mode] = entry
+
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        print(f"\nWrote {args.out}")
+    return 0
+
+
 # --- Parser ---
 
 
@@ -280,6 +349,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("question", help="the question, in quotes")
     p.add_argument("--json", action="store_true", help="print the result as JSON")
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("eval-router", help="score the router(s) on a labeled test set")
+    p.add_argument("test_set", type=Path, help="YAML test set (query, gold_path, ...)")
+    p.add_argument(
+        "--router", choices=["rules", "llm", "both"], default="both", help="default: both"
+    )
+    p.add_argument("--structured", type=Path, help="also score a structured gold-value set (YAML)")
+    p.add_argument("--out", type=Path, help="write all results to this JSON file")
+    p.set_defaults(func=cmd_eval_router)
 
     return parser
 

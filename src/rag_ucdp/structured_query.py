@@ -217,6 +217,7 @@ def execute_structured_query(
     filters: dict[str, Any] | None = None,
     *,
     redirect_notice: str | None = None,
+    kind: AggregationKind | None = None,
 ) -> StructuredResult:
     """Dispatch a structured query to the appropriate aggregation.
 
@@ -237,6 +238,8 @@ def execute_structured_query(
             Aggregating would silently sum the whole corpus, so instead this
             returns a :data:`AggregationKind.REDIRECT` result carrying the
             honest message. Path C never passes this, so it is unaffected.
+        kind: Aggregation chosen by the caller (the LLM router's plan). When
+            set, it replaces the keyword rules above; ``None`` keeps them.
 
     Returns:
         A :class:`StructuredResult`.
@@ -250,11 +253,18 @@ def execute_structured_query(
         )
 
     filters = filters or {}
-    has_civilian = bool(_CIVILIAN_PATTERN.search(query))
-    has_fatality = bool(_FATALITY_PATTERN.search(query))
-    has_by_year = bool(_BY_YEAR_PATTERN.search(query))
-    has_by_oblast = bool(_BY_OBLAST_PATTERN.search(query))
-    has_compare = bool(_COMPARE_PATTERN.search(query))
+    if kind is not None and kind is not AggregationKind.REDIRECT:
+        has_civilian = kind is AggregationKind.SUM_CIVILIAN_DEATHS
+        has_fatality = kind in (AggregationKind.SUM_FATALITIES, AggregationKind.SUM_CIVILIAN_DEATHS)
+        has_by_year = kind is AggregationKind.BREAKDOWN_BY_YEAR
+        has_by_oblast = kind is AggregationKind.BREAKDOWN_BY_OBLAST
+        has_compare = False
+    else:
+        has_civilian = bool(_CIVILIAN_PATTERN.search(query))
+        has_fatality = bool(_FATALITY_PATTERN.search(query))
+        has_by_year = bool(_BY_YEAR_PATTERN.search(query))
+        has_by_oblast = bool(_BY_OBLAST_PATTERN.search(query))
+        has_compare = bool(_COMPARE_PATTERN.search(query))
 
     if has_civilian and has_fatality:
         value = sum_fatalities(df, filters, column=CIVILIAN_FATALITY_COLUMN)
