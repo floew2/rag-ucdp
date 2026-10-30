@@ -12,24 +12,20 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 # Dependencies first, so code changes do not invalidate this layer.
-# The lockfile's torch wheel for Linux x86_64 pulls in about 3 GB of CUDA
-# libraries. The image runs on CPU, so on x86_64 those are skipped and torch
-# is installed from PyTorch's CPU-only index at the locked version. The exported
-# list is complete and pinned, so --no-deps stops pip-style resolution from
-# pulling the CUDA build back in through torch's dependents.
+# The locked torch wheel for Linux pulls in several GB of CUDA libraries
+# (nvidia-*, cuda-*, triton). The image runs on CPU, so those are skipped and
+# torch is installed from PyTorch's CPU-only index at the locked version, on
+# both amd64 and arm64. The exported list is complete and pinned, so --no-deps
+# stops resolution from pulling the CUDA build back in through torch's dependents.
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt \
+    && torch_pin="$(grep -oE '^torch==[^ ;]+' /tmp/requirements.txt)" \
+    && grep -vE '^(nvidia-|cuda-|triton==|torch==)' /tmp/requirements.txt > /tmp/requirements-cpu.txt \
     && uv venv /app/.venv \
-    && if [ "$(uname -m)" = "x86_64" ]; then \
-         torch_pin="$(grep -oE '^torch==[^ ;]+' /tmp/requirements.txt)" \
-         && grep -vE '^(nvidia-|torch==)' /tmp/requirements.txt > /tmp/requirements-cpu.txt \
-         && uv pip install --python /app/.venv/bin/python --no-deps -r /tmp/requirements-cpu.txt \
-         && uv pip install --python /app/.venv/bin/python --no-deps \
-              --index-url https://download.pytorch.org/whl/cpu "$torch_pin"; \
-       else \
-         uv pip install --python /app/.venv/bin/python --no-deps -r /tmp/requirements.txt; \
-       fi
+    && uv pip install --python /app/.venv/bin/python --no-deps -r /tmp/requirements-cpu.txt \
+    && uv pip install --python /app/.venv/bin/python --no-deps \
+         --index-url https://download.pytorch.org/whl/cpu "$torch_pin"
 
 # The project itself, installed in editable mode: paths in config.yaml are
 # resolved relative to the repository root, i.e. /app.

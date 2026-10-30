@@ -79,7 +79,7 @@ jobs:
         run: |
           docker run --rm rag-ucdp:ci rag-ucdp --help
           docker run --rm rag-ucdp:ci python -c "import torch, sentence_transformers; print('torch', torch.__version__)"
-          if docker run --rm rag-ucdp:ci sh -c 'ls /app/.venv/lib/python3.12/site-packages | grep -q "^nvidia"'; then
+          if docker run --rm rag-ucdp:ci sh -c 'ls /app/.venv/lib/python3.12/site-packages | grep -qE "^(nvidia|cuda|triton)"'; then
             echo "::error::CUDA libraries found in the image"; exit 1
           fi
 

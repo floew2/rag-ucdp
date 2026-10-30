@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import re
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
@@ -575,13 +576,13 @@ def evaluate_router(
         {item.gold_path for item in test_items} | {classify_fn(item.query) for item in test_items}
     )
 
-    cm = pd.DataFrame(0, index=classes, columns=classes)
+    pair_counts: Counter[tuple[str, str]] = Counter()
     per_query: list[dict[str, Any]] = []
     correct = 0
 
     for item in test_items:
         pred = classify_fn(item.query)
-        cm.loc[item.gold_path, pred] += 1  # type: ignore[operator]
+        pair_counts[(item.gold_path, pred)] += 1
         is_correct = item.gold_path == pred
         if is_correct:
             correct += 1
@@ -594,6 +595,11 @@ def evaluate_router(
             }
         )
 
+    cm = pd.DataFrame(
+        [[pair_counts[(gold, pred)] for pred in classes] for gold in classes],
+        index=classes,
+        columns=classes,
+    )
     precision: dict[str, float] = {}
     recall: dict[str, float] = {}
     f1: dict[str, float] = {}
