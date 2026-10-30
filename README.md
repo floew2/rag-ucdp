@@ -111,7 +111,7 @@ The first start does a one-time setup: it downloads the app image (about 2 GB), 
 
 ### Without Docker (for development)
 
-You need Python 3.12, [uv](https://github.com/astral-sh/uv) and [Ollama](https://ollama.com).
+You need Python 3.12, [uv](https://github.com/astral-sh/uv) and [Ollama](https://ollama.com). Linux, Apple-silicon Macs and Intel Macs are supported; on Intel Macs `uv sync` installs the last PyTorch release built for them (2.2) with matching older libraries, so security alerts for those pinned versions concern native Intel-Mac installs only, not the Docker image.
 
 ```bash
 git clone https://github.com/floew2/rag-ucdp.git
