@@ -242,6 +242,131 @@ def ndcg_at_k(predicted_ids: list[str], relevance: dict[str, int], k: int) -> fl
     return _dcg(gains) / idcg if idcg > 0 else 0.0
 
 
+def average_precision(predicted_ids: list[str], gold_ids: list[str]) -> float:
+    """Average Precision over the *full* ranked list (binary relevance).
+
+    AP averages Precision@k measured at each rank that holds a gold event,
+    normalised by ``|gold|`` — so a query whose relevant events all sit at the
+    very top scores 1.0, and events ranked deeper are discounted by how much
+    non-relevant material precedes them. Independent of the eval k. Returns 0.0
+    for an empty gold set. :func:`mean_average_precision` averages this over
+    queries (= mAP).
+    """
+    gold_set = {str(g) for g in gold_ids}
+    if not gold_set:
+        return 0.0
+    hits = 0
+    precision_sum = 0.0
+    for rank, pid in enumerate(str(p) for p in predicted_ids):
+        if pid in gold_set:
+            hits += 1
+            precision_sum += hits / (rank + 1)
+    return precision_sum / len(gold_set)
+
+
+def mean_average_precision(
+    predicted_by_query: dict[str, list[str]], gold_by_query: dict[str, list[str]]
+) -> float:
+    """MAP = mean of :func:`average_precision` over queries with a non-empty gold.
+
+    ``predicted_by_query`` maps query -> ranked ids, ``gold_by_query`` maps
+    query -> gold ids. Queries with no gold are skipped (AP undefined). Returns
+    0.0 when no scorable query exists.
+    """
+    aps = [
+        average_precision(predicted_by_query.get(q, []), golds)
+        for q, golds in gold_by_query.items()
+        if golds
+    ]
+    return float(sum(aps) / len(aps)) if aps else 0.0
+
+
+def average_precision_at_k(predicted_ids: list[str], gold_ids: list[str], k: int) -> float:
+    """Average Precision truncated at k, normalised by ``min(k, |gold|)``.
+
+    The standard **AP@k** (Kaggle / recommender convention): only the top-k are
+    scored, and the denominator is ``min(k, R)`` so a *perfect* top-k ranking
+    scores 1.0 even when there are more relevant events than slots (R > k). This
+    differs from :func:`average_precision`, which normalises by the full R over
+    the whole list. Use this for a pipeline-matched cutoff (e.g. AP@10 = the
+    quality of the events the generator actually sees). Returns 0.0 for empty gold.
+    """
+    gold_set = {str(g) for g in gold_ids}
+    if not gold_set:
+        return 0.0
+    hits = 0
+    precision_sum = 0.0
+    for rank, pid in enumerate(str(p) for p in predicted_ids[:k]):
+        if pid in gold_set:
+            hits += 1
+            precision_sum += hits / (rank + 1)
+    denom = min(k, len(gold_set))
+    return precision_sum / denom if denom else 0.0
+
+
+def mean_average_precision_at_k(
+    predicted_by_query: dict[str, list[str]], gold_by_query: dict[str, list[str]], k: int
+) -> float:
+    """mAP@k = mean of :func:`average_precision_at_k` over queries with gold."""
+    aps = [
+        average_precision_at_k(predicted_by_query.get(q, []), golds, k)
+        for q, golds in gold_by_query.items()
+        if golds
+    ]
+    return float(sum(aps) / len(aps)) if aps else 0.0
+
+
+#: Standard 11-point recall levels (0.0, 0.1, ..., 1.0) for interpolated PR curves.
+PR_RECALL_LEVELS = tuple(i / 10 for i in range(11))
+
+
+def interpolated_pr_curve(
+    predicted_ids: list[str],
+    gold_ids: list[str],
+    recall_levels: tuple[float, ...] = PR_RECALL_LEVELS,
+) -> list[float]:
+    """Interpolated precision at each standard recall level, for one query.
+
+    Walks the ranked list accumulating (recall, precision) points, then reports
+    *interpolated* precision at each level: the maximum precision seen at any
+    recall ≥ that level. This is the standard interpolation that removes the
+    PR-curve sawtooth. Returns one precision per level (all-zero for empty gold);
+    average element-wise across queries via :func:`mean_pr_curve`.
+    """
+    gold_set = {str(g) for g in gold_ids}
+    r = len(gold_set)
+    if r == 0:
+        return [0.0] * len(recall_levels)
+    hits = 0
+    points: list[tuple[float, float]] = []  # (recall, precision) at each hit
+    for rank, pid in enumerate(str(p) for p in predicted_ids):
+        if pid in gold_set:
+            hits += 1
+            points.append((hits / r, hits / (rank + 1)))
+    out: list[float] = []
+    for level in recall_levels:
+        reachable = [prec for rec, prec in points if rec >= level]
+        out.append(max(reachable) if reachable else 0.0)
+    return out
+
+
+def mean_pr_curve(
+    predicted_by_query: dict[str, list[str]],
+    gold_by_query: dict[str, list[str]],
+    recall_levels: tuple[float, ...] = PR_RECALL_LEVELS,
+) -> list[float]:
+    """Element-wise mean of :func:`interpolated_pr_curve` over queries with gold."""
+    curves = [
+        interpolated_pr_curve(predicted_by_query.get(q, []), golds, recall_levels)
+        for q, golds in gold_by_query.items()
+        if golds
+    ]
+    if not curves:
+        return [0.0] * len(recall_levels)
+    n = len(curves)
+    return [sum(c[i] for c in curves) / n for i in range(len(recall_levels))]
+
+
 @dataclass
 class RetrievalMetrics:
     """Aggregated retrieval metrics with per-query traces."""
@@ -726,7 +851,7 @@ def run_generation_track(
 
     ``prompt_top_k`` is how many retrieved events are placed in the LLM prompt;
     ``retrieval_depth`` is how many are retrieved (defaults to ``prompt_top_k``).
-    For the prompt-depth ablation (v011), fix ``retrieval_depth`` at the deepest
+    For a prompt-depth ablation, fix ``retrieval_depth`` at the deepest
     level and vary ``prompt_top_k`` so retrieval is held constant and only the
     prompt slice changes. Citation faithfulness is scored against the prompt
     slice (the events the model could actually see), not the full retrieved set.

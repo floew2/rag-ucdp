@@ -1,0 +1,31 @@
+# Keep the build context small and free of local or private files.
+.git
+.github
+.venv
+**/__pycache__
+**/*.py[cod]
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.ipynb_checkpoints
+.idea
+.vscode
+.DS_Store
+
+# Local data: only the processed event table goes into the image.
+data/raw
+data/chroma_db
+data/bm25
+
+# Not needed at runtime
+docs
+notebooks
+tests
+evals
+notes
+PROJECT_SUMMARY_UCDP.md
+
+# Secrets and local settings
+.env
+.env.*
+config.local.yaml

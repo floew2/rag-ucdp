@@ -375,9 +375,7 @@ class BM25Index:
             FileNotFoundError: If ``path`` does not exist.
         """
         if not path.exists():
-            raise FileNotFoundError(
-                f"BM25 index not found at {path}. Run the indexing notebook first."
-            )
+            raise FileNotFoundError(f"BM25 index not found at {path}. Run `rag-ucdp index` first.")
         with path.open("rb") as f:
             data = pickle.load(f)
 

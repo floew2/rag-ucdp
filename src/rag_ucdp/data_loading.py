@@ -1,7 +1,11 @@
 """UCDP GED data loading and Ukraine-scope filtering.
 
-This module exposes three functions:
+Main entry points:
 
+- :func:`download_ged_csv` downloads a UCDP GED release (zipped CSV) and
+  extracts the CSV.
+- :func:`prepare_processed` runs load → filter → derive → save in one call;
+  it backs the ``rag-ucdp data`` command.
 - :func:`load_raw_ucdp` reads the UCDP GED CSV from disk into a DataFrame and
   verifies that the required columns are present.
 - :func:`filter_to_ukraine_scope` applies party-based geographic filtering
@@ -18,14 +22,20 @@ independently and inspect intermediate results.
 from __future__ import annotations
 
 import logging
+import shutil
+import zipfile
 from pathlib import Path
 from typing import Final
+from urllib.request import urlopen
 
 import pandas as pd
 
 from rag_ucdp.exceptions import DataValidationError
 
 logger = logging.getLogger(__name__)
+
+#: Download URL pattern for UCDP GED releases, e.g. ``ged251-csv.zip`` for 25.1.
+GED_DOWNLOAD_URL: Final[str] = "https://ucdp.uu.se/downloads/ged/ged{tag}-csv.zip"
 
 #: Mapping from UCDP integer codes to human-readable labels.
 TYPE_OF_VIOLENCE_LABELS: Final[dict[int, str]] = {
@@ -83,8 +93,8 @@ def load_raw_ucdp(csv_path: Path) -> pd.DataFrame:
     """
     if not csv_path.exists():
         raise FileNotFoundError(
-            f"UCDP CSV not found at {csv_path}. Download from "
-            "https://ucdp.uu.se/downloads/#ged_global and place it in data/raw/."
+            f"UCDP CSV not found at {csv_path}. Run `rag-ucdp data` to download "
+            "it, or get it from https://ucdp.uu.se/downloads/."
         )
 
     logger.info("Loading UCDP CSV from %s", csv_path)
@@ -203,10 +213,90 @@ def load_processed(path: Path) -> pd.DataFrame:
         FileNotFoundError: If ``path`` does not exist.
     """
     if not path.exists():
-        raise FileNotFoundError(
-            f"Processed events not found at {path}. "
-            "Run notebook 01 cell that saves the processed subset first."
-        )
+        raise FileNotFoundError(f"Processed events not found at {path}. Run `rag-ucdp data` first.")
     df = pd.read_parquet(path)
     logger.info("Loaded %d events from %s", len(df), path)
+    return df
+
+
+def ged_download_url(version: str) -> str:
+    """Return the download URL of a UCDP GED release.
+
+    Args:
+        version: Release number such as ``"25.1"``.
+
+    Returns:
+        The URL of the zipped CSV on ucdp.uu.se.
+    """
+    return GED_DOWNLOAD_URL.format(tag=version.replace(".", ""))
+
+
+def download_ged_csv(version: str, dest_dir: Path, *, force: bool = False) -> Path:
+    """Download a UCDP GED release and extract its CSV into ``dest_dir``.
+
+    The zip is kept next to the CSV so a re-run does not download again.
+
+    Args:
+        version: Release number such as ``"25.1"``.
+        dest_dir: Directory for the zip and the extracted CSV.
+        force: Download again even if the zip already exists.
+
+    Returns:
+        Path of the extracted CSV.
+
+    Raises:
+        DataValidationError: If the archive contains no CSV file.
+        OSError: On network or file-system errors.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    url = ged_download_url(version)
+    zip_path = dest_dir / url.rsplit("/", 1)[-1]
+
+    if force or not zip_path.exists():
+        logger.info("Downloading %s", url)
+        tmp_path = zip_path.with_suffix(".part")
+        with urlopen(url, timeout=120) as resp, tmp_path.open("wb") as out:  # noqa: S310
+            shutil.copyfileobj(resp, out)
+        tmp_path.replace(zip_path)
+    else:
+        logger.info("Using existing download %s", zip_path)
+
+    with zipfile.ZipFile(zip_path) as zf:
+        csv_members = [m for m in zf.namelist() if m.lower().endswith(".csv")]
+        if not csv_members:
+            raise DataValidationError(f"No CSV file found in {zip_path}.")
+        member = csv_members[0]
+        csv_path = dest_dir / Path(member).name
+        with zf.open(member) as src, csv_path.open("wb") as out:
+            shutil.copyfileobj(src, out)
+    logger.info("Extracted %s", csv_path)
+    return csv_path
+
+
+def prepare_processed(
+    csv_path: Path,
+    output_path: Path,
+    conflict_parties_include: list[str],
+    date_start: pd.Timestamp | str,
+    date_end: pd.Timestamp | str,
+) -> pd.DataFrame:
+    """Build the processed event table from a raw UCDP CSV and save it.
+
+    Runs :func:`load_raw_ucdp`, :func:`filter_to_ukraine_scope`,
+    :func:`add_derived_columns` and :func:`save_processed` in sequence.
+
+    Args:
+        csv_path: Raw UCDP GED CSV.
+        output_path: Destination Parquet file.
+        conflict_parties_include: Party substrings that define the scope.
+        date_start: First event date to include (inclusive).
+        date_end: Last event date to include (inclusive).
+
+    Returns:
+        The processed DataFrame that was written.
+    """
+    raw = load_raw_ucdp(csv_path)
+    scoped = filter_to_ukraine_scope(raw, conflict_parties_include, date_start, date_end)
+    df = add_derived_columns(scoped)
+    save_processed(df, output_path)
     return df

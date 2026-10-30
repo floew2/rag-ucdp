@@ -6,18 +6,34 @@ not in the middle of a run) and IDE autocompletion (`config.retrieval.top_k`
 is typed, not a dict-key lookup).
 """
 
+import os
 from datetime import date
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field
 
+#: Repository root. Relative paths in the config are resolved against it, so
+#: commands work regardless of the current working directory.
+REPO_ROOT: Path = Path(__file__).resolve().parents[2]
+
+#: Default location of the configuration file.
+DEFAULT_CONFIG_PATH: Path = REPO_ROOT / "config" / "config.yaml"
+
+#: Environment variable that overrides ``models.ollama_base_url``.
+OLLAMA_URL_ENV: str = "OLLAMA_BASE_URL"
+
 
 class DataConfig(BaseModel):
-    """Paths to raw and processed data."""
+    """UCDP source version and the locations of data and indexes."""
 
-    ucdp_csv_path: Path
-    processed_dir: Path
+    ged_version: str = Field(default="25.1", pattern=r"^\d{2}\.\d$")
+    raw_dir: Path = Path("data/raw")
+    processed_file: Path = Path("data/processed/events_ukraine.parquet")
+    chroma_dir: Path = Path("data/chroma_db")
+    collection_name: str = "ucdp_events"
+    bm25_path: Path = Path("data/bm25/index.pkl")
+    source_affiliations: Path = Path("config/source_affiliations.yaml")
 
 
 class ScopeConfig(BaseModel):
@@ -35,12 +51,14 @@ class RetrievalConfig(BaseModel):
     semantic_top_k: int = Field(gt=0)
     bm25_top_k: int = Field(gt=0)
     rrf_k: int = Field(gt=0)
+    hybrid_top_k: int = Field(default=50, gt=0)
 
 
 class ModelsConfig(BaseModel):
     """Embedding and LLM model identifiers."""
 
     embedding_model: str
+    embedding_device: str = Field(default="cpu", pattern="^(cpu|mps|cuda)$")
     llm_model: str
     ollama_base_url: str
 
@@ -50,6 +68,10 @@ class RouterConfig(BaseModel):
 
     mode: str = Field(pattern="^(rules|llm)$")
     bias_warning_threshold: float = Field(ge=0.0, le=1.0)
+    #: Path C counts over a fixed number of retrieved events, so its numbers
+    #: are not reliable totals. While off, path-C questions get a semantic
+    #: answer with the relevant events instead.
+    hybrid_path: bool = False
 
 
 class GenerationConfig(BaseModel):
@@ -57,6 +79,7 @@ class GenerationConfig(BaseModel):
 
     temperature: float = Field(ge=0.0, le=2.0)
     max_tokens: int = Field(gt=0)
+    prompt_top_k: int = Field(default=5, gt=0)
 
 
 class AppConfig(BaseModel):
@@ -86,3 +109,17 @@ def load_config(path: Path) -> AppConfig:
     with path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return AppConfig(**raw)
+
+
+def resolve_path(path: Path) -> Path:
+    """Return ``path`` unchanged if absolute, else relative to the repository root."""
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def ollama_base_url(cfg: AppConfig) -> str:
+    """Return the Ollama URL, letting ``OLLAMA_BASE_URL`` override the config.
+
+    The override lets the app run in a container while Ollama runs natively
+    on the host (e.g. ``http://host.docker.internal:11434``).
+    """
+    return os.environ.get(OLLAMA_URL_ENV, cfg.models.ollama_base_url)

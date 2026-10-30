@@ -19,7 +19,7 @@ results.
 
 Rank-based fusion at both levels keeps the pipeline deterministic given fixed
 inputs and fully inspectable — no cross-encoder is involved (cross-encoder
-reranking was tested and rejected in v007/v008). The **only** non-deterministic
+reranking was evaluated and rejected for this task). The **only** non-deterministic
 step is the LLM variant generation itself, which is why the variants are exposed
 on :class:`MultiQueryResult` (surface them in the UI trace) and can be pinned /
 cached by the caller for reproducible evaluation.

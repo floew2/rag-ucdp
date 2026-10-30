@@ -19,8 +19,8 @@ Design notes:
   on this dataset, so DuckDB's SQL convenience doesn't pay its dependency
   cost. The module is therefore pandas-only.
 - The dispatcher is intentionally rule-based and transparent — same
-  philosophy as the router. It does not try to handle every phrasing; the
-  evaluation set in Phase 11 will surface gaps to fill.
+  philosophy as the router. It does not try to handle every phrasing;
+  gaps are surfaced by the structured-query evaluation.
 """
 
 from __future__ import annotations

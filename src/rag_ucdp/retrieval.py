@@ -47,7 +47,7 @@ class RetrievalResult:
         vector_distance: Cosine distance from the vector search, if available.
         bm25_rank: 0-indexed rank within the BM25 results, or ``None``.
         bm25_score: BM25 score, if available.
-        rerank_score: Cross-encoder relevance score (v007), or ``None`` if the
+        rerank_score: Cross-encoder relevance score, or ``None`` if the
             result was not reranked. Higher = more relevant.
         rerank_rank: 0-indexed rank within the reranked order, or ``None``.
     """

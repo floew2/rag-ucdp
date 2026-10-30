@@ -1,12 +1,12 @@
-"""Regression tests for city-level scoping in the router (v010).
+"""Regression tests for city-level scoping in the router.
 
-Covers the city-scoping gap fixed in v010: queries naming a city (not an
+Covers city scoping: queries naming a city (not an
 oblast) must either resolve to the city's ``adm_2`` raion (Class 1) or be
 recognized and redirected (Class 2, free-text-only) — never silently
 aggregated over the whole corpus.
 
 Gold raion values and the existence/absence of each ``adm_2`` raion were
-verified against ``events_ukraine.parquet`` (see RESULTS_CHANGELOG v010).
+verified against ``events_ukraine.parquet``.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Cross-encoder reranking (v007).
+"""Cross-encoder reranking (evaluated, not used in the default pipeline).
 
 A second-stage reranker that re-scores the first-stage candidate pool with a
 cross-encoder. Where the bi-encoder retriever (BGE) embeds query and document

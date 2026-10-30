@@ -199,12 +199,8 @@ def test_health_check_fails_on_network_error() -> None:
 # --- module constants ---
 
 
-def test_default_model_is_llama_3b() -> None:
-    assert DEFAULT_MODEL == "llama3.2:3b"
-
-
-# def test_default_model_is_quantized_mistral() -> None:
-#     assert DEFAULT_MODEL == "mistral:7b-instruct-v0.3-q4_0"
+def test_default_model_is_mistral_7b() -> None:
+    assert DEFAULT_MODEL == "mistral:7b"
 
 
 def test_default_prompt_top_k_is_10() -> None:
