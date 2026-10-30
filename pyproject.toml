@@ -57,6 +57,16 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv.sources]
+# On Linux (Docker, CI) torch comes from PyTorch's CPU-only index, so the
+# lockfile carries no CUDA libraries. macOS uses the regular PyPI wheels.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv]
 # Newer releases ship no Intel macOS wheel (pulled in by jupyter).
 constraint-dependencies = [
