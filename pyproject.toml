@@ -68,9 +68,13 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv]
-# Newer releases ship no Intel macOS wheel (pulled in by jupyter).
+# Intel-Mac limits for packages that do not declare them themselves.
+# argon2-cffi-bindings: newer releases ship no Intel macOS wheel (pulled in by jupyter).
 constraint-dependencies = [
     "argon2-cffi-bindings<26; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # pyarrow 26 needs NumPy 2 at import time but does not declare it, and the
+    # Intel-Mac stack is held at NumPy 1.26 (see torch above).
+    "pyarrow<26; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 # The lockfile must install on all of these.
 required-environments = [
