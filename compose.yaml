@@ -6,7 +6,7 @@
 #
 # The first start downloads the Ollama image (~3.3 GB), the embedding model
 # (~1.3 GB) and the answer model (~4 GB), and builds the search indexes on
-# CPU, which takes a while. Later starts skip all of that.
+# CPU, which takes hours. Later starts skip all of that.
 #
 # Already running Ollama on this computer (e.g. for GPU speed on a Mac)? Use it
 # instead of the container:

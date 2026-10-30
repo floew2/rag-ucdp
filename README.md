@@ -95,7 +95,7 @@ docker compose up -d
 
 Then open http://localhost:8501.
 
-The first start does a one-time setup: it builds the app image and downloads Ollama (about 3.3 GB), the embedding model (about 1.3 GB) and the answer model Mistral 7B (about 4 GB), then builds the search indexes. Indexing runs on CPU and can take a long time (expect tens of minutes or more). Follow it with `docker compose logs -f init`; the app opens once it has finished. Later starts take seconds.
+The first start does a one-time setup: it builds the app image and downloads Ollama (about 3.3 GB), the embedding model (about 1.3 GB) and the answer model Mistral 7B (about 4 GB), then builds the search indexes. Indexing runs on CPU and takes hours: about 4.7 hours on a recent multi-core Mac. Plan the first start for an afternoon or overnight; the computer must stay awake. Follow the progress with `docker compose logs -f init`; the app opens once setup has finished. Later starts take seconds.
 
 | Task | Command |
 |---|---|
@@ -121,7 +121,7 @@ uv run rag-ucdp prepare    # builds the indexes and downloads the answer model (
 uv run rag-ucdp app        # web app at http://localhost:8501
 ```
 
-Ollama must be running (the Ollama app, or `ollama serve`). On Apple silicon, `uv run rag-ucdp index --device mps` can build the indexes faster than `prepare`, which uses the CPU. Indexes built this way are also used by Docker, since both read `data/`.
+Ollama must be running (the Ollama app, or `ollama serve`). `prepare` builds the indexes on CPU, which takes hours; on Apple silicon run `uv run rag-ucdp index --device mps` first, which uses the GPU and should be much faster. Indexes built this way are also used by Docker, since both read `data/`.
 
 ### Commands
 

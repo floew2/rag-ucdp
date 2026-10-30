@@ -129,7 +129,7 @@ def _build_indexes(cfg: AppConfig, device: str | None, batch_size: int) -> int:
     device = device or cfg.models.embedding_device
     print(
         f"Embedding {len(df):,} events with {cfg.models.embedding_model} on {device}. "
-        "The first run downloads the model (about 1.3 GB); on CPU this takes a while."
+        "The first run downloads the model (about 1.3 GB); on CPU this takes hours."
     )
     stats = build_indexes(
         df,
