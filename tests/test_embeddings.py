@@ -15,7 +15,7 @@ from rag_ucdp.embeddings import DEFAULT_MODEL_NAME, EmbeddingModel
 def mock_st() -> MagicMock:
     """Build a mock SentenceTransformer with deterministic outputs."""
     mock = MagicMock()
-    mock.get_sentence_embedding_dimension.return_value = 1024
+    mock.get_embedding_dimension.return_value = 1024
     mock.encode.side_effect = lambda texts, **kwargs: np.ones((len(texts), 1024), dtype=np.float32)
     return mock
 

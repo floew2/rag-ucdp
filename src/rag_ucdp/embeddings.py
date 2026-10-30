@@ -70,7 +70,7 @@ class EmbeddingModel:
     @property
     def dimension(self) -> int:
         """Output embedding dimensionality (1024 for BGE-large-en-v1.5)."""
-        dim = self.model.get_sentence_embedding_dimension()
+        dim = self.model.get_embedding_dimension()
         if dim is None:
             raise RuntimeError(f"Model {self.model_name} reports no embedding dimension.")
         return dim
