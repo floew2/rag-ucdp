@@ -733,18 +733,24 @@ def evaluate_structured(
 # ---------------------------------------------------------------------------
 
 
-def run_router_track(items: list[Any]) -> RouterMetrics:
-    """Evaluate the router track against the production `classify`.
+def run_router_track(items: list[Any], router: Callable[[str], Any] | None = None) -> RouterMetrics:
+    """Evaluate the router track against the production router.
 
     The grader compares a path string ("A"/"B"/"C"/"D"), so the router decision
-    is reduced to ``classify(query).path.value``.
+    is reduced to ``router(query).path.value``. ``router`` defaults to the rule
+    router (``classify``); pass an :class:`rag_ucdp.llm_router.LLMRouter` to
+    evaluate that instead. Each query is routed once.
     """
     from rag_ucdp.router import classify
 
-    return evaluate_router(items, lambda q: classify(q).path.value)
+    route = router or classify
+    paths = {item.query: route(item.query).path.value for item in items}
+    return evaluate_router(items, paths.__getitem__)
 
 
-def run_structured_query_for_eval(query: str, df: pd.DataFrame) -> Any:
+def run_structured_query_for_eval(
+    query: str, df: pd.DataFrame, router: Callable[[str], Any] | None = None
+) -> Any:
     """Production path-B execution, reduced to the value the grader compares.
 
     Mirrors the app: router extracts filters; a free-text-only city or an
@@ -755,13 +761,20 @@ def run_structured_query_for_eval(query: str, df: pd.DataFrame) -> Any:
     from rag_ucdp.router import classify
     from rag_ucdp.structured_query import AggregationKind, execute_structured_query
 
-    decision = classify(query)
+    decision = (router or classify)(query)
     notice = (
         decision.extracted.get("notice")
         if decision.extracted.get("structured_unavailable")
         else None
     )
-    result = execute_structured_query(query, df, filters=decision.filters, redirect_notice=notice)
+    planned = decision.extracted.get("aggregation")
+    result = execute_structured_query(
+        query,
+        df,
+        filters=decision.filters,
+        redirect_notice=notice,
+        kind=AggregationKind(planned) if planned else None,
+    )
     if result.kind is AggregationKind.REDIRECT:
         return REDIRECT_SENTINEL
     if result.breakdown is not None:
@@ -776,9 +789,14 @@ def run_structured_query_for_eval(query: str, df: pd.DataFrame) -> Any:
     return result.value
 
 
-def run_structured_track(items: list[Any], df: pd.DataFrame) -> StructuredMetrics:
-    """Evaluate the structured track over ``df`` using the production path."""
-    return evaluate_structured(items, lambda q: run_structured_query_for_eval(q, df))
+def run_structured_track(
+    items: list[Any], df: pd.DataFrame, router: Callable[[str], Any] | None = None
+) -> StructuredMetrics:
+    """Evaluate the structured track over ``df`` using the production path.
+
+    ``router`` defaults to the rule router; see :func:`run_router_track`.
+    """
+    return evaluate_structured(items, lambda q: run_structured_query_for_eval(q, df, router))
 
 
 def make_retriever(

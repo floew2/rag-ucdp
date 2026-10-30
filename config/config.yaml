@@ -28,7 +28,8 @@ models:
   ollama_base_url: "http://localhost:11434"   # env OLLAMA_BASE_URL overrides
 
 router:
-  mode: "rules"
+  mode: "rules"          # rules | llm (the answer model plans the query; rules as fallback)
+  llm_timeout_s: 60      # per question, for mode llm
   bias_warning_threshold: 0.7
   hybrid_path: false     # path C (count over retrieved events) is off until it has a relevance step
 
