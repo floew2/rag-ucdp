@@ -1,0 +1,129 @@
+name: Release
+
+# Pushing a version tag (e.g. v0.1.0) builds the Docker image for amd64 and
+# arm64 on native runners, publishes it to GitHub Container Registry as
+# ghcr.io/<owner>/rag-ucdp:<version>, and creates a GitHub release.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match the package version
+        id: v
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(grep -m1 -oP '^version = "\K[^"]+' pyproject.toml)
+          compose=$(grep -m1 -oP 'ghcr.io/[^:]+:\K[0-9][^}"\s]*' compose.yaml)
+          echo "tag=$tag pyproject=$pkg compose=$compose"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$compose" ]; then
+            echo "::error::Tag v$tag must match pyproject.toml ($pkg) and compose.yaml ($compose)"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check-version
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.check-version.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Smoke test
+        run: docker run --rm --platform ${{ matrix.platform }} "${IMAGE}@${{ steps.build.outputs.digest }}" rag-ucdp --help
+
+      - name: Save digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  publish:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Create multi-platform image
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}" -t "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" --repo "${{ github.repository }}" \
+            --title "v${VERSION}" --generate-notes \
+            --notes "Docker image: \`${IMAGE}:${VERSION}\` (linux/amd64, linux/arm64)."
