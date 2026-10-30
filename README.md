@@ -85,7 +85,7 @@ flowchart TD
 
 ### With Docker (recommended: nothing else to install)
 
-You only need [Docker](https://docs.docker.com/get-docker/) and an internet connection for the first start.
+You only need [Docker](https://docs.docker.com/get-docker/) and an internet connection for the first start. The app image is published for each release (`ghcr.io/floew2/rag-ucdp`, Intel/AMD and Apple silicon), so nothing is built on your machine.
 
 ```bash
 git clone https://github.com/floew2/rag-ucdp.git
@@ -95,7 +95,7 @@ docker compose up -d
 
 Then open http://localhost:8501.
 
-The first start does a one-time setup: it builds the app image and downloads Ollama (about 3.3 GB), the embedding model (about 1.3 GB) and the answer model Mistral 7B (about 4 GB), then builds the search indexes. Indexing runs on CPU and takes hours: about 4.7 hours on a recent multi-core Mac. Plan the first start for an afternoon or overnight; the computer must stay awake. Follow the progress with `docker compose logs -f init`; the app opens once setup has finished. Later starts take seconds.
+The first start does a one-time setup: it downloads the app image (about 2 GB), Ollama (about 3.3 GB), the embedding model (about 1.3 GB) and the answer model Mistral 7B (about 4 GB), then builds the search indexes. Indexing runs on CPU and takes hours: about 4.7 hours on a recent multi-core Mac. Plan the first start for an afternoon or overnight; the computer must stay awake. Follow the progress with `docker compose logs -f init`; the app opens once setup has finished. Later starts take seconds.
 
 | Task | Command |
 |---|---|
@@ -144,6 +144,8 @@ All commands work the same with `uv run rag-ucdp …` and with `docker compose r
 
 **Tests** need neither Ollama nor the indexes: `uv run pytest`.
 
+**Releasing.** Set the same version in `pyproject.toml`, `src/rag_ucdp/__init__.py` and the image tag in `compose.yaml` (a test checks they agree), merge, then push a tag such as `v0.1.0`. The release workflow builds the image for both platforms, publishes it to GitHub Container Registry and creates the GitHub release. To run your own changes in Docker, build locally with `docker compose up -d --build`.
+
 ## Repository layout
 
 ```
@@ -180,7 +182,7 @@ rag-ucdp/
 ├── tests/                      # pytest suite, runs in ~10 s
 ├── Dockerfile · compose.yaml   # container setup (compose.host-ollama.yaml: use a native Ollama)
 ├── pyproject.toml · uv.lock
-└── .github/workflows/ci.yml    # ruff, mypy, pytest, Docker build
+└── .github/workflows/          # ci.yml: ruff, mypy, pytest, Docker build · release.yml: publish image
 ```
 
 ## Limitations
